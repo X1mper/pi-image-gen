@@ -22,6 +22,7 @@ import type {
   ImageProviderRuntime,
 } from '../types.js';
 import { withDefaultPath } from '../url.js';
+import { configureAzureOpenAiProvider, openAiImageUrl } from './azure-openai.js';
 
 export function hasProviderAuthentication(provider: ResolvedProvider): boolean {
   return provider.customAuth?.type === 'none' || Boolean(provider.apiKey);
@@ -96,6 +97,9 @@ export const openaiAdapter: ImageProviderAdapter = {
     inputs?: ResolvedImageInput[],
     runtime?: ImageProviderRuntime,
   ): Promise<RawImageResult[]> {
+    if (provider.builtIn && provider.id === 'azure-openai') {
+      provider = configureAzureOpenAiProvider(provider);
+    }
     if (!hasProviderAuthentication(provider)) {
       throw missingKeyError(provider);
     }
@@ -115,7 +119,7 @@ async function generateFromText(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<RawImageResult[]> {
-  const url = `${base}/images/generations`;
+  const url = openAiImageUrl(provider, base, 'generations');
   const body: Record<string, unknown> = {
     model: remoteModelId,
     prompt: params.prompt,
@@ -152,7 +156,7 @@ async function generateWithImages(
   signal?: AbortSignal,
   mask?: ResolvedImageInput,
 ): Promise<RawImageResult[]> {
-  const url = `${base}/images/edits`;
+  const url = openAiImageUrl(provider, base, 'edits');
   const form = new FormData();
   form.append('model', remoteModelId);
   form.append('prompt', params.prompt);
@@ -174,11 +178,17 @@ async function generateWithImages(
     form.append(fieldName, blob, `image-${i}.${ext}`);
   }
 
+  const headers = bearerHeaders(provider);
+  // fetch must supply the multipart boundary, including when custom headers
+  // were configured for JSON generation on this same provider.
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === 'content-type') delete headers[name];
+  }
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: 'POST',
-      headers: bearerHeaders(provider),
+      headers,
       body: form,
       signal: signal ?? null,
       redirect: credentialRedirectMode(provider),

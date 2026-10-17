@@ -4,7 +4,7 @@ export function formatSpriteToolResult(result: SpriteGenerateResult, markdownIma
   const lines: string[] = result.validation.accepted
     ? [`Generated and validated ${result.frames.length} sprite frame(s) via ${result.provider} (${result.model}).`]
     : ['Generated the sprite sheet, but deterministic animation validation did not approve it. No automatic retry was made.'];
-  if (result.animation) lines.push(`Animation: APNG, ${result.animation.frameDurationMs} ms/frame.`);
+  if (result.animation) lines.push(`Animation: ${result.animation.format.toUpperCase()}, ${result.animation.frameDurationMs} ms/frame.`);
   if (result.validation.issues.length) {
     lines.push('', 'Validation findings:', ...result.validation.issues.map((issue) => `- ${issue.severity.toUpperCase()} ${issue.code}: ${issue.message}${issue.frameIndexes ? ` Frames: ${issue.frameIndexes.join(', ')}.` : ''}`));
   }
@@ -12,7 +12,7 @@ export function formatSpriteToolResult(result: SpriteGenerateResult, markdownIma
   if (result.normalizedSheet) lines.push(`![normalized sprite sheet](${markdownImageUrl(result.normalizedSheet)})`);
   if (result.animation) lines.push(`![sprite animation](${markdownImageUrl(result.animation.path)})`);
   lines.push('', `Run directory: ${result.runDirectory}`);
-  if (!result.validation.accepted) lines.push('Inspect identity, anatomy, costume, and motion before requesting an explicit regeneration.');
+  if (!result.validation.accepted) lines.push('Inspect identity, anatomy, costume, and motion.');
   return lines.join('\n');
 }
 
@@ -26,7 +26,7 @@ export function spriteProgressMessage(phase: string): string {
     'extracting-frames': 'Extracting ordered sprite frames…',
     'normalizing-frames': 'Applying shared scale and alignment…',
     'validating-animation': 'Validating sprite geometry and motion…',
-    'encoding-animation': 'Encoding the APNG animation…',
+    'encoding-animation': 'Encoding the sprite animation…',
     'saving-output': 'Saving sprite outputs…',
   };
   return messages[phase] ?? 'Processing sprite output…';

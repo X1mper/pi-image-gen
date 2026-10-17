@@ -116,7 +116,7 @@ async function generateImageInternal(
 
   validateImageCount(params);
   if (
-    (resolved.provider.api === 'ark' || resolved.provider.api === 'meta') &&
+    (resolved.provider.api === 'ark' || resolved.provider.api === 'meta' || resolved.provider.api === 'mai') &&
     params.n != null &&
     params.n !== 1
   ) {

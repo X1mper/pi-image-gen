@@ -1,4 +1,4 @@
-import type { GenerateImageParams, ImageModelCapabilities } from '../types.js';
+import type { ApiStyle, GenerateImageParams, ImageModelCapabilities } from '../types.js';
 import type { SpriteGenerateParams, SpritePlan } from './types.js';
 
 const ACTION_PHASES: Record<SpritePlan['action'], string[]> = {
@@ -42,11 +42,12 @@ export function spriteGenerationControls(
   params: SpriteGenerateParams,
   plan: SpritePlan,
   caps: ImageModelCapabilities | null,
+  api?: ApiStyle,
 ): Pick<GenerateImageParams, 'size' | 'aspectRatio' | 'imageSize' | 'quality' | 'outputFormat' | 'background'> {
   const controls: Pick<GenerateImageParams, 'size' | 'aspectRatio' | 'imageSize' | 'quality' | 'outputFormat' | 'background'> = {};
   if (params.quality) controls.quality = params.quality;
   if (params.size) controls.size = params.size;
-  else if (!caps?.aspectRatios && supportsSize(caps, '1536x1024') && plan.columns / plan.rows === 1.5) controls.size = '1536x1024';
+  else if (!(api === 'mai' && params.image?.length) && !caps?.aspectRatios && supportsSize(caps, '1536x1024') && plan.columns / plan.rows === 1.5) controls.size = '1536x1024';
   if (params.aspectRatio) controls.aspectRatio = params.aspectRatio;
   else if (caps?.aspectRatios) {
     const exact = ratioString(plan.columns, plan.rows);

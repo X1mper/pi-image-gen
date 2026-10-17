@@ -158,7 +158,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
       label: 'SpriteGen',
       description:
         'Generate one coherent transparent sprite sheet, then locally split, align, validate, and encode it. Disabled unless pi-image-gen.spriteGeneration.enabled is true. Uses the same configured provider/model, safe reference-image rules, and generation boundary as image_generate. One call makes exactly one image-generation request and never retries automatically.',
-      promptSnippet: 'Generate one coherent action as a deterministic sprite-sheet bundle and optional APNG.',
+      promptSnippet: 'Generate one coherent action as a PNG sprite-sheet bundle and optional APNG or animated WebP.',
       promptGuidelines: buildSpriteGuidelines(),
       parameters: buildSpriteToolParameters(caps) as never,
       async execute(_toolCallId: string, rawParams: unknown, signal, onUpdate, ctx) {
@@ -182,7 +182,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
           };
         } catch (error) {
           console.error(`[pi-image-gen] sprite_generate failed: ${toLogSummary(error)}`);
-          throw new Error(`sprite_generate failed: ${errorMessageForUser(error)} No automatic retry was made; ask the user before starting another image-generation request.`);
+          throw new Error(`sprite_generate failed: ${errorMessageForUser(error)} No automatic retry was made.`);
         }
       },
     });
@@ -327,6 +327,10 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
         if (!routeChoice) return;
         const routeId = routeChoice.split(' — ')[0]!;
         const route = routes.find((candidate) => candidate.id === routeId)!;
+        if (route.id === 'mai-api' || route.id === 'azure-openai-api') {
+          ctx.ui.notify(`Azure uses your deployment name, which may differ from the catalog model name. Use /image-gen use ${route.id} <deployment-name>.`, 'info');
+          return;
+        }
         const models = route.modelIds.length > 0 ? route.modelIds : [];
         if (models.length === 0) {
           ctx.ui.notify(`Provider ${routeId} accepts pass-through model ids. Use /image-gen use ${routeId} <model>.`, 'info');
@@ -688,7 +692,7 @@ export function resolveImageToolCapabilities(
   if ('error' in resolved) return { api: null, quality: QUALITY_VALUES, model: null };
   const { provider } = resolved;
   const quality =
-    provider.builtIn && honorsGptImageQuality(provider.api, resolved.remoteId)
+    provider.builtIn && (provider.id === 'azure-openai' || honorsGptImageQuality(provider.api, resolved.remoteId))
       ? (resolved.capabilities?.qualityValues ?? QUALITY_VALUES)
       : !provider.builtIn &&
           resolved.customQualityValues &&
@@ -703,9 +707,11 @@ export function resolveImageToolCapabilities(
           ...(discovered ?? {}),
           ...(resolved.declaredCapabilities ?? {}),
         }
-    : discovered
-      ? { ...genericCapabilitiesForApi('openrouter'), ...discovered }
-      : null;
+    : provider.api === 'mai'
+      ? genericCapabilitiesForApi('mai')
+      : discovered
+        ? { ...genericCapabilitiesForApi('openrouter'), ...discovered }
+        : null;
   return {
     api: provider.api,
     quality,
@@ -733,6 +739,9 @@ export function sizeDescription(api: ApiStyle | null): string {
   if (api === 'ark') {
     return 'Image size such as "2048x2048". Seedream 5.0 / 5.0-lite / 4.5 require 2K or larger — "1024x1024" fails with InvalidParameter; only Seedream 4.0 accepts 1K sizes.';
   }
+  if (api === 'mai') {
+    return 'Text-to-image size as "<width>x<height>" (e.g. "1024x1024"). MAI 2.5 allows up to 1,048,576 total pixels; MAI 2.6 allows up to 2,359,296. Azure deployment names do not identify the model version; the provider validates its limits.';
+  }
   if (api === 'meta') {
     return 'Image size passed to Meta\'s image_generation tool. Official cookbook examples include "1024x1024", "1536x1024", and "1024x1536"; the provider validates the complete supported set.';
   }
@@ -741,7 +750,7 @@ export function sizeDescription(api: ApiStyle | null): string {
 
 /** Capability-independent part of the `image` parameter description. */
 const IMAGE_PARAM_BASE =
-  'Optional reference image(s) for image-to-image / edit / style transfer / character preservation. Each entry MUST be either (a) a regular image file inside the session cwd — absolute or relative — or (b) a public http(s) URL. Symlinks, Base64 strings, and data: URIs are rejected; write raw image bytes to a file under cwd first. For a single image pass ["path"]. Multi-image conditioning is supported by OpenAI GPT Image models, Gemini, Qwen sync models, and Meta Muse Image. To iterate on a previous output inside cwd, pass that file path here.';
+  'Optional reference image(s) for image-to-image / edit / style transfer / character preservation. Each entry MUST be either (a) a regular image file inside the session cwd — absolute or relative — or (b) a public http(s) URL. Symlinks, Base64 strings, and data: URIs are rejected; write raw image bytes to a file under cwd first. For a single image pass ["path"]. Multi-image conditioning is supported by OpenAI GPT Image models, Gemini, Qwen sync models, Meta Muse Image, and supported Microsoft MAI deployments. To iterate on a previous output inside cwd, pass that file path here.';
 
 /**
  * Build the `image_generate` parameter schema for the resolved capabilities.
@@ -768,7 +777,9 @@ export function buildImageToolParameters(caps: ImageToolCapabilities): TObject {
   const genericImageSize = genericGemini && !declaredImageSizes;
   const showSize = !aspectRatios && !genericGemini;
   const sizeText = showSize
-    ? ((model ? capabilitySizeDescription(model) : null) ?? sizeDescription(caps.api))
+    ? caps.api === 'mai'
+      ? `${(model ? capabilitySizeDescription(model, '1024x1024') : null) ?? sizeDescription(caps.api)} Each dimension must be at least 768 pixels; size is text-to-image only and must be omitted with reference images.`
+      : ((model ? capabilitySizeDescription(model) : null) ?? sizeDescription(caps.api))
     : null;
   return Type.Object({
     prompt: Type.String({
@@ -782,7 +793,7 @@ export function buildImageToolParameters(caps: ImageToolCapabilities): TObject {
           : IMAGE_PARAM_BASE,
       }),
     ),
-    ...(caps.api !== 'meta' && caps.api !== 'ark' && (!model || model.nMax > 1)
+    ...(caps.api !== 'meta' && caps.api !== 'ark' && caps.api !== 'mai' && (!model || model.nMax > 1)
       ? {
           n: Type.Optional(
             Type.Integer({
@@ -889,7 +900,7 @@ export function buildImageToolParameters(caps: ImageToolCapabilities): TObject {
  */
 export function buildImageGuidelines(caps: ImageToolCapabilities): string[] {
   const showN =
-    caps.api !== 'meta' && caps.api !== 'ark' && (!caps.model || caps.model.nMax > 1);
+    caps.api !== 'meta' && caps.api !== 'ark' && caps.api !== 'mai' && (!caps.model || caps.model.nMax > 1);
   const guidelines = [
     'Use image_generate for bitmap assets: photos, illustrations, textures, sprites, product/UI mockups, concept art, icons, logos, and diagrams. For icons, logos, diagrams, or UI graphics, prefer repo-native SVG/vector/CSS/canvas when matching an existing asset system, deterministic output, or ongoing editability matters; this is a recommendation, not a prohibition on image generation.',
     'Generate vs edit: with no `image`, or when `image` entries are only style/composition/mood references, this is a fresh generation. To modify an existing image while preserving most of it, pass that image and describe the change as an edit.',

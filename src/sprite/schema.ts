@@ -24,10 +24,10 @@ export function buildSpriteToolParameters(caps: ImageToolCapabilities): TObject 
     align: Type.Optional(StringEnum(['center', 'bottom', 'feet'] as const, { description: 'Shared alignment anchor. Grounded characters default to feet; effects default to center.' })),
     scaleStrategy: Type.Optional(StringEnum(['fit', 'preserve'] as const, { description: 'fit uses one shared scale for all frames; preserve keeps source scale unless one uniform reduction prevents clipping.' })),
     componentMode: Type.Optional(StringEnum(['largest', 'all'] as const, { description: 'largest favors one main character; all preserves meaningful detached effect components.' })),
-    format: Type.Optional(StringEnum(['apng', 'frames'] as const, { description: 'APNG animation or normalized PNG frames only.' })),
+    format: Type.Optional(StringEnum(['png', 'apng', 'webp', 'frames'] as const, { description: 'PNG sprite sheet, APNG animation, lossless animated WebP, or normalized PNG frames. PNG assets are always preserved.' })),
     frameDurationMs: Type.Optional(Type.Integer({ minimum: 20, maximum: 10_000 })),
-    strictValidation: Type.Optional(Type.Boolean({ description: 'When true, clipping and animation-quality findings prevent APNG approval.' })),
-    ...(!aspectRatios && !genericGemini ? { size: Type.Optional(Type.String({ description: 'Provider-supported sheet size. A 2×3 grid prefers 1536x1024 when supported.' })) } : {}),
+    strictValidation: Type.Optional(Type.Boolean({ description: 'When true, clipping and animation-quality findings prevent animation approval.' })),
+    ...(!aspectRatios && !genericGemini ? { size: Type.Optional(Type.String({ description: caps.api === 'mai' ? 'MAI text-to-image sheet size. Omit with reference images; the edits API has no size control. Each dimension must be at least 768 pixels; Azure validates the deployed model pixel limit.' : 'Provider-supported sheet size. A 2×3 grid prefers 1536x1024 when supported.' })) } : {}),
     ...(aspectRatios || genericGemini ? { aspectRatio: Type.Optional(aspectRatios ? StringEnum(aspectRatios, { description: 'Provider-supported sheet aspect ratio.' }) : Type.String({ description: 'Provider-supported sheet aspect ratio such as "3:2".' })) } : {}),
     ...(imageSizes || genericImageSize ? { imageSize: Type.Optional(imageSizes ? StringEnum(imageSizes, { description: 'Provider-supported output resolution tier.' }) : Type.String({ description: 'Provider-supported output resolution tier such as "2K".' })) } : {}),
     ...(caps.quality ? { quality: Type.Optional(StringEnum(caps.quality, { description: 'Provider-supported quality level.' })) } : {}),
@@ -41,7 +41,7 @@ export function buildSpriteGuidelines(): string[] {
     'Use sprite_generate only for one coherent sprite action sheet. Use image_generate for ordinary single images.',
     'Six frames default to a 2-row by 3-column row-major grid. Never request independent n variants for animation frames.',
     'Label reference-image roles and state identity, fixed camera, shared scale/baseline, containment, and true transparency requirements.',
-    'A call makes one image-generation request and never retries automatically. If validation rejects the result, show the preserved raw sheet and ask before generating again.',
+    'A call makes one image-generation request and never retries automatically. If validation rejects the result, report the findings and show the preserved raw sheet.',
     'Deterministic validation checks alpha, geometry, clipping, scale, and silhouette motion; the user must still inspect identity, anatomy, costume, and acting.',
   ];
 }

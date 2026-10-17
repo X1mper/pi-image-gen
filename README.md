@@ -6,25 +6,29 @@ Pi extension that adds the general-purpose `image_generate` tool and an optional
 | ------------------------------ | --------------------------------------------- | --------------------- |
 | ChatGPT Codex                  | `gpt-image-2` on route `codex-subscription` (`gpt-image-2-codex`, `codex`, and `openai-codex` remain legacy aliases) | Pi `/login` → ChatGPT Plus/Pro (Codex) |
 | OpenAI                         | `gpt-image-2`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` | `OPENAI_API_KEY`      |
+| Azure OpenAI | Azure GPT Image deployment name (`azure-openai-api`); GPT Image 1 / 1-mini / 1.5 / 2 / 2.5 Flare / Sunburst | `AZURE_OPENAI_API_KEY` |
 | Google Gemini ("Nano Banana")  | `gemini-3-pro-image` (alias `nano-banana-pro`), `gemini-3.1-flash-image` (alias `nano-banana-2`), `gemini-3.1-flash-lite-image` (alias `nano-banana-2-lite`), `gemini-2.5-flash-image` (alias `nano-banana`) | `GEMINI_API_KEY` |
 | Alibaba DashScope (Qwen-Image) | `qwen-image-3.0-pro`, `qwen-image-3.0`, `qwen-image-2.0-pro`, `qwen-image-2.0` | `DASHSCOPE_API_KEY`   |
 | Volcengine Ark (ByteDance Seedream) | `doubao-seedream-5-0-pro-260628` (alias `seedream-5-pro`, retired id `doubao-seedream-5-0-pro-260128` still resolves), `doubao-seedream-5-0-260128` (aliases `seedream-5`, `seedream`; the same model also answers to `doubao-seedream-5-0-lite-260128` / `seedream-5-lite`), `doubao-seedream-4-5-251128` (alias `seedream-4-5`), `doubao-seedream-4-0-250828` (alias `seedream-4`) | `ARK_API_KEY`         |
 | Meta Model API (Muse Image) | `muse-image-1.0` (aliases `muse-image`, `meta-muse`) | Pi `/login meta` via `pi-meta-oauth`, or `META_API_KEY` |
+| Microsoft MAI (Azure Foundry) | Azure deployment name; MAI-Image-2.5 / Flash / Pro and MAI-Image-2.6 / Flash | `AZURE_MAI_API_KEY` |
 | OpenRouter                     | any (use `openrouter/<vendor>/<id>`)          | `OPENROUTER_API_KEY`  |
 | Custom providers               | whatever you declare in settings              | (your choice, via `$VAR`) |
 
 Upstream API docs (handy when debugging gateway behavior or adding new models):
 
 - OpenAI GPT Image — [generation guide](https://developers.openai.com/api/docs/guides/image-generation), [gpt-image-2](https://developers.openai.com/api/docs/models/gpt-image-2), [2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst)
+- Azure OpenAI — [image generation guide](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/dall-e), [v1 preview REST endpoints](https://learn.microsoft.com/en-us/azure/foundry/openai/reference-preview-latest)
 - Google Gemini image generation — [ai.google.dev/gemini-api/docs/image-generation](https://ai.google.dev/gemini-api/docs/image-generation)
 - Alibaba Qwen-Image 3.0 (generation & editing) — [help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference](https://help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference)
 - Alibaba DashScope Qwen-Image 2.0 (text-to-image) — [help.aliyun.com/zh/model-studio/qwen-image-api](https://help.aliyun.com/zh/model-studio/qwen-image-api)
 - Alibaba DashScope Qwen-Image-Edit — [help.aliyun.com/zh/model-studio/qwen-image-edit-api](https://help.aliyun.com/zh/model-studio/qwen-image-edit-api)
 - Volcengine Ark Seedream — [volcengine.com/docs/82379/1824121](https://www.volcengine.com/docs/82379/1824121)
+- Microsoft MAI Image — [Azure Foundry generation and edits API](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image)
 - Meta Muse Image cookbook — [github.com/meta-models/meta-model-cookbook/tree/main/05_muse_image](https://github.com/meta-models/meta-model-cookbook/tree/main/05_muse_image)
 - OpenRouter image API — [openrouter.ai/docs/api/api-reference/images/create-images](https://openrouter.ai/docs/api/api-reference/images/create-images)
 
-Built-in API-key routes read the environment variables shown above (or `providers.<id>.apiKey` in `settings.json`); they do not read keys saved by Pi's general `/login` flow. Subscription routes are separate: Meta can use a Pi credential created by the [`pi-meta-oauth`](https://github.com/BlockedPath/pi-meta-oauth) package, while Codex uses Pi's ChatGPT Plus/Pro login. Meta API billing also accepts `META_API_KEY`; legacy `MODEL_API_KEY` remains accepted.
+Built-in API-key routes read `providers.<id>.apiKey` in local `settings.json` first, then fall back to the environment variables shown above; they do not read keys saved by Pi's general `/login` flow. Subscription routes are separate: Meta can use a Pi credential created by the [`pi-meta-oauth`](https://github.com/BlockedPath/pi-meta-oauth) package, while Codex uses Pi's ChatGPT Plus/Pro login. Meta API billing also accepts `META_API_KEY`; legacy `MODEL_API_KEY` remains accepted.
 
 For subscription-backed generation, first run `/login` in Pi and select **ChatGPT Plus/Pro (Codex)**, then run `/image-gen use codex-subscription gpt-image-2`. No `OPENAI_API_KEY` is required. Codex requests use the ChatGPT-backed image endpoints and count against provider-managed subscription usage and limits. GPT Image 2.5 is intentionally **not** listed on this route: its API model ids have not been verified against the private Codex subscription endpoint.
 
@@ -41,7 +45,7 @@ pi install npm:@abhishek944/pi-image-gen
 Or directly from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-image-gen@v0.4.2
+pi install git:github.com/abhishek944/pi-image-gen@v0.5.0
 ```
 
 The package's `pi.extensions` field auto-registers the compiled `dist/extension.js` entry with the host pi-coding-agent runtime; no extra wiring needed.
@@ -146,7 +150,7 @@ That's it. From the agent: `image_generate({ prompt: "a cyberpunk cat" })`.
 
 | Field             | Purpose                                                                                  |
 | ----------------- | ---------------------------------------------------------------------------------------- |
-| `defaultProvider` | Authentication-specific route (`openai-api`, `codex-subscription`, `gemini-api`, `dashscope-api`, `openrouter-api`, `ark-api`, `meta-api`, `meta-subscription`, or a custom-provider id). Recommended for new configs. |
+| `defaultProvider` | Authentication-specific route (`openai-api`, `codex-subscription`, `gemini-api`, `dashscope-api`, `openrouter-api`, `ark-api`, `meta-api`, `meta-subscription`, `mai-api`, `azure-openai-api`, or a custom-provider id). Recommended for new configs. |
 | `defaultModel`    | Model id or alias the tool will use. **Required.**                                       |
 | `outputDir`       | Where to write generated images. Relative paths resolve against the session cwd. Default `.pi/images`. |
 | `requestTimeoutMs` | End-to-end deadline including inputs and downloads. `1000`–`900000`; default `120000`. |
@@ -287,6 +291,93 @@ The string after `openrouter/` is the OpenRouter model slug; pass any image mode
 
 OpenRouter's image API is **not** OpenAI-compatible despite the family name — it lives at `POST /api/v1/images` (no `/generations` suffix) and uses JSON `input_references` for image-to-image. The extension targets the right endpoint automatically; no wire-shape config needed.
 
+## Azure OpenAI image deployments
+
+Use `azure-openai-api` for Azure-hosted GPT Image models. It is separate from public OpenAI API billing, the Codex subscription route, and Azure MAI. No credential falls back to those other providers.
+
+```sh
+export AZURE_OPENAI_API_KEY="your-azure-resource-key"
+```
+
+In `~/.pi/agent/settings.json` (or agent settings):
+
+```json
+{
+  "pi-image-gen": {
+    "defaultProvider": "azure-openai-api",
+    "defaultModel": "your-image-deployment",
+    "providers": {
+      "azure-openai": {
+        "baseUrl": "https://your-resource.openai.azure.com/openai/v1"
+      }
+    }
+  }
+}
+```
+
+Set `defaultModel` to the **Azure deployment name**, not necessarily the catalog model name. Select it in Pi with `/image-gen use azure-openai-api your-image-deployment`.
+
+- Credentials: `providers.azure-openai.apiKey` first, then local `AZURE_OPENAI_API_KEY`. You can use `${AZURE_OPENAI_API_KEY}` in global/agent settings; project settings do not interpolate environment placeholders. The built-in route sends the key in `api-key` and rejects redirects; it does not read Pi `/login` credentials or refresh Entra tokens.
+- Endpoint: `providers.azure-openai.baseUrl` first, then local `AZURE_OPENAI_ENDPOINT`. An HTTPS resource root, `/openai/v1` base, or full v1 `/images/generations` or `/images/edits` URL is accepted. No userinfo, query parameters, fragments, project path, or legacy deployment-scoped URL is accepted. Only configure an endpoint you trust: credentials are sent there.
+- Requests use the existing OpenAI image API wire format: JSON generations and multipart edits, both with `?api-version=preview`. The integration does not call the legacy `/openai/deployments/...` API and requires no Azure SDK.
+- Catalog profiles: `gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`. These only work when deployed in your resource. Arbitrary deployment names are passed through unchanged and receive common GPT Image control advice rather than a guessed model version. Catalog-named deployments receive their known quality/size profile. DALL-E 3 is retired and is not advertised.
+- Supports generation, reference-image editing, masks, quality, PNG/JPEG output, background and JPEG compression controls. Microsoft's image guide excludes WebP output for Azure; direct OpenAI's formats are unchanged. Model-specific options and numeric limits remain Azure's authority. GPT Image 2.5 profiles expose `xhigh` and `max` in addition to the common quality values. This extension keeps its existing 20MB-per-input and 128MB-combined safety ceilings.
+
+See [Microsoft's image generation guide](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/dall-e) for regional/model access and deployment requirements.
+
+## Microsoft MAI on Azure Foundry
+
+Use the `mai-api` route. Set `defaultModel` to **your Azure deployment name**, not necessarily the model's catalog name. MAI has no shared default endpoint: configure the resource endpoint explicitly.
+
+```sh
+export AZURE_MAI_API_KEY="your-azure-resource-key"
+```
+
+In `~/.pi/agent/settings.json` (or your agent settings):
+
+```json
+{
+  "pi-image-gen": {
+    "defaultProvider": "mai-api",
+    "defaultModel": "your-mai-deployment",
+    "providers": {
+      "mai": {
+        "baseUrl": "https://your-resource.services.ai.azure.com/mai/v1"
+      }
+    }
+  }
+}
+```
+
+Optionally set `providers.mai.apiKey` to a credential or `${AZURE_MAI_API_KEY}` in global/agent settings. A nonblank settings key takes precedence over `AZURE_MAI_API_KEY`; otherwise the environment variable is read directly. Environment placeholders are not expanded in project settings. Credentials are sent to the configured endpoint, so use a trusted resource or gateway.
+
+A resource-root URL also works: the adapter adds `/mai/v1`. Do not include `/images/generations`, `/images/edits`, query parameters, or a project endpoint path. Requests use the `api-key` header and reject redirects. The built-in route does not use Pi `/login` or refresh Entra credentials.
+
+After loading the updated extension, select the deployment with:
+
+```text
+/image-gen use mai-api your-mai-deployment
+```
+
+Microsoft's current documented catalog (all preview, Global Standard):
+
+| Catalog model | Deployment version |
+| --- | --- |
+| `MAI-Image-2.5` | `2026-06-02` |
+| `MAI-Image-2.5-Flash` | `2026-06-02` |
+| `MAI-Image-2.5-Pro` | `2026-06-19` |
+| `MAI-Image-2.6` | `2026-07-31` |
+| `MAI-Image-2.6-Flash` | `2026-07-31` |
+
+The version is selected when deploying in Azure; it is not a generation-request setting. Arbitrary deployment names (including older deployments) are passed through unchanged. Catalog-named deployments receive the known model's size advice; arbitrary deployment names receive family-level guidance without guessing their version.
+
+- Text-to-image: `POST /mai/v1/images/generations`; `size: "1024x1024"` becomes integer `width` and `height`. Each dimension must be at least 768. MAI 2.5 permits at most 1,048,576 total pixels; MAI 2.6 permits at most 2,359,296. The provider enforces the deployed model's numeric limits.
+- Editing: `POST /mai/v1/images/edits` with multipart form data and repeated `image` fields. Current documented models accept up to five PNG/JPEG references. **Omit `size` for edits**; the documented edits API has no width/height control. Older deployments may not support edits.
+- Output is a base64-encoded PNG, saved through the existing image pipeline. No `n` greater than 1, `quality`, `background`, mask, output-format/compression, or seed controls are exposed. PNG output does not guarantee transparency; the sprite pipeline still requires real alpha.
+- MAI 2.6-specific `auto_aspect_ratio` and `web_grounding` controls are not exposed by this integration.
+
+See [Microsoft's MAI image API reference](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image) for availability, quotas, and current preview limitations.
+
 ## Custom providers
 
 Use `customProviders` for anything not built in: a self-hosted Stable Diffusion, an internal corp gateway, a third-party image API. The shape mirrors [pi.dev's custom-provider docs](https://pi.dev/docs/latest/custom-provider).
@@ -295,10 +386,10 @@ Each custom provider declares:
 
 | Field      | Required | Notes                                                                                |
 | ---------- | -------- | ------------------------------------------------------------------------------------ |
-| `api` | yes      | One of `openai`, `gemini`, `dashscope`, `openrouter`, `ark`, `meta`. Picks the image-API wire shape. |
-| `baseUrl`  | no       | API endpoint URL; defaults to the selected `api` adapter's built-in endpoint when omitted. Environment interpolation follows the settings-file rules above. |
+| `api` | yes      | One of `openai`, `gemini`, `dashscope`, `openrouter`, `ark`, `meta`, `mai`. Picks the image-API wire shape. |
+| `baseUrl`  | no       | API endpoint URL; defaults to the selected `api` adapter's built-in endpoint when omitted, except `mai`, which requires a resource-specific URL. Environment interpolation follows the settings-file rules above. |
 | `apiKey`   | usually  | Credential string. `$VAR` syntax supported. Required for `bearer` and `header` authentication. |
-| `auth`     | no       | `{ "type": "bearer" }`, `{ "type": "header", "header": "x-api-key" }`, or explicit `{ "type": "none" }`. Omission preserves the adapter's legacy default (Gemini uses `x-goog-api-key`; the others use bearer). |
+| `auth`     | no       | `{ "type": "bearer" }`, `{ "type": "header", "header": "x-api-key" }`, or explicit `{ "type": "none" }`. Omission preserves the adapter's legacy default (Gemini uses `x-goog-api-key`, MAI uses `api-key`; the others use bearer). |
 | `name`     | no       | Display name shown in `/image-gen list`.                                             |
 | `headers`  | no       | Extra headers merged into every request.                                             |
 | `models`   | no       | Optional model id/alias list. Omit to make this a **catch-all** — the provider will accept any unknown model id (passed through as the remote id). Provide a list only when you want aliases or want to route specific ids elsewhere. Each entry is a string or `{ id, alias?, name?, capabilities? }`. |
@@ -327,7 +418,7 @@ A custom model whose `id` names a built-in model **inherits that model's capabil
 }
 ```
 
-> Note: pi.dev custom providers also have an `api` field, but its values (`openai-completions`, `anthropic-messages`, …) are LLM streaming formats that don't apply to image generation. The values here (`openai`, `gemini`, `dashscope`, `openrouter`, `ark`, `meta`) are image-API wire shapes — same field name, different namespace.
+> Note: pi.dev custom providers also have an `api` field, but its values (`openai-completions`, `anthropic-messages`, …) are LLM streaming formats that don't apply to image generation. The values here (`openai`, `gemini`, `dashscope`, `openrouter`, `ark`, `meta`, `mai`) are image-API wire shapes — same field name, different namespace.
 
 ### Example: self-hosted Stable Diffusion (OpenAI-compatible)
 
@@ -452,7 +543,7 @@ sprite_generate({
 })
 ```
 
-Six frames default to a 2×3 grid. `frameCount` must equal `rows × columns`, subject to the configured `maxFrames` and a hard maximum of 16. Supported output formats are `apng` and `frames`; GIF is intentionally not advertised because it reduces alpha and color fidelity. APNG requires at least two frames; use `format: "frames"` for a single sprite. Model-aware `size`, `aspectRatio`, `imageSize`, and `quality` controls appear only when the configured route supports them.
+Six frames default to a 2×3 grid. `frameCount` must equal `rows × columns`, subject to the configured `maxFrames` and a hard maximum of 16. Supported output formats are `png` (a static normalized sprite sheet), `apng` (the default animation), `webp` (a lossless animation with transparency), and `frames` (the existing PNG-frame option). Set `spriteGeneration.defaultFormat` in settings or override it with `format` on a call. All formats preserve the PNG sheet and individual PNG frames. APNG and WebP require at least two frames; use `format: "png"` or `"frames"` for a single sprite. GIF is intentionally not advertised because it reduces alpha and color fidelity. Model-aware `size`, `aspectRatio`, `imageSize`, and `quality` controls appear only when the configured route supports them.
 
 Processing controls:
 
@@ -473,11 +564,13 @@ Each call reserves a new run directory and never overwrites an earlier run:
 ├── raw-sheet.png
 ├── sheet-transparent.png
 ├── frames/frame-01.png ... frame-06.png
-├── animation.apng
+├── animation.apng           # animation.webp for WebP; absent for png/frames
 └── pipeline-meta.json
 ```
 
-Strict validation prevents APNG approval when required checks fail, while preserving the raw sheet and any safe processed artifacts. Advisory mode can accept bounded quality warnings, but structural failures such as empty cells or missing alpha still reject the sequence. Local checks cannot prove identity, costume, anatomy, or acting quality; inspect those visually before shipping.
+WebP encoding uses the Sharp dependency locally; it does not make another provider request. The encoder verifies decoded pixels, frame order, timing, and infinite looping before saving the animation. If native encoder loading or verification fails, PNG assets are preserved and the result reports `webp-encoding`.
+
+Strict validation prevents animation approval when required checks fail, while preserving the raw sheet and any safe processed artifacts. Advisory mode can accept bounded quality warnings, but structural failures such as empty cells or missing alpha still reject the sequence. Local checks cannot prove identity, costume, anatomy, or acting quality; inspect those visually before shipping.
 
 ## Tool: `image_generate`
 

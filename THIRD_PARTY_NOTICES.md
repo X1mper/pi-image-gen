@@ -63,6 +63,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Sharp and libvips
+
+Sharp is used for lossless WebP frame encoding and animation verification:
+
+- https://github.com/lovell/sharp
+- Licensed under Apache License 2.0. Sharp's package includes its license and dependency notices.
+- Upstream libvips is licensed under LGPL-2.1-or-later.
+- Sharp's prebuilt native bundles (`@img/sharp-libvips-*`, for example `@img/sharp-libvips-darwin-arm64`) declare **LGPL-3.0-or-later** and ship their own dependency license notices for libvips and the bundled image codecs (aom, cairo, glib, and others). The bundles note that LGPLv3 use is via the "any later version" clause of LGPLv2/LGPLv2.1.
+
 ## pako
 
 Transitive compression dependency of UPNG.js:

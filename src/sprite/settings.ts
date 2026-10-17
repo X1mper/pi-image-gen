@@ -25,7 +25,7 @@ export function normalizeSpriteSettings(raw: SpriteGenerationSettings | undefine
     enabled: typeof raw.enabled === 'boolean' ? raw.enabled : false,
     defaultRows,
     defaultColumns,
-    defaultFormat: raw.defaultFormat === 'apng' || raw.defaultFormat === 'frames' ? raw.defaultFormat : DEFAULT_SPRITE_SETTINGS.defaultFormat,
+    defaultFormat: raw.defaultFormat === 'png' || raw.defaultFormat === 'apng' || raw.defaultFormat === 'webp' || raw.defaultFormat === 'frames' ? raw.defaultFormat : DEFAULT_SPRITE_SETTINGS.defaultFormat,
     frameDurationMs: boundedInteger(raw.frameDurationMs, 20, 10_000) ?? DEFAULT_SPRITE_SETTINGS.frameDurationMs,
     strictValidation: typeof raw.strictValidation === 'boolean' ? raw.strictValidation : DEFAULT_SPRITE_SETTINGS.strictValidation,
     outputDir: typeof raw.outputDir === 'string' && raw.outputDir.trim() ? raw.outputDir.trim() : DEFAULT_SPRITE_SETTINGS.outputDir,
@@ -67,14 +67,14 @@ export function planSprite(params: SpriteGenerateParams, settings: NormalizedSpr
   const action = params.action ?? (capacity === 1 ? 'single' : 'walk');
   const assetType = params.assetType ?? 'character';
   const view = params.view ?? 'side';
-  if (!['center', 'bottom', 'feet'].includes(align) || !['fit', 'preserve'].includes(scaleStrategy) || !['largest', 'all'].includes(componentMode) || !['apng', 'frames'].includes(format) || !['single', 'idle', 'walk', 'run', 'cast', 'attack', 'shoot', 'jump', 'hurt', 'hover', 'charge', 'explode', 'death'].includes(action) || !['player', 'npc', 'creature', 'character', 'prop', 'spell', 'projectile', 'impact', 'fx'].includes(assetType) || !['topdown', 'side', 'three-quarter'].includes(view)) {
+  if (!['center', 'bottom', 'feet'].includes(align) || !['fit', 'preserve'].includes(scaleStrategy) || !['largest', 'all'].includes(componentMode) || !['png', 'apng', 'webp', 'frames'].includes(format) || !['single', 'idle', 'walk', 'run', 'cast', 'attack', 'shoot', 'jump', 'hurt', 'hover', 'charge', 'explode', 'death'].includes(action) || !['player', 'npc', 'creature', 'character', 'prop', 'spell', 'projectile', 'impact', 'fx'].includes(assetType) || !['topdown', 'side', 'three-quarter'].includes(view)) {
     throw new ImageGenError('One or more sprite enum parameters are invalid.', 'sprite enum parameter invalid');
   }
   if (params.strictValidation !== undefined && typeof params.strictValidation !== 'boolean') {
     throw new ImageGenError('strictValidation must be a boolean.', 'sprite strictValidation invalid');
   }
-  if (format === 'apng' && frameCount < 2) {
-    throw new ImageGenError('APNG output requires at least two frames. Use format "frames" for a single sprite.', 'single-frame APNG unsupported');
+  if ((format === 'apng' || format === 'webp') && frameCount < 2) {
+    throw new ImageGenError('Animated output requires at least two frames. Use format "png" or "frames" for a single sprite.', 'single-frame animation unsupported');
   }
   return { rows, columns, frameCount, align, scaleStrategy, componentMode, format, frameDurationMs: duration, strictValidation: params.strictValidation ?? settings.strictValidation, action, assetType, view };
 }

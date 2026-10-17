@@ -7,22 +7,25 @@ export type ApiStyle =
   | 'openrouter'
   | 'ark'
   | 'meta'
+  | 'mai'
   | 'codex';
 export type CustomApiStyle = Exclude<ApiStyle, 'codex'>;
 
-/** Built-in provider id. Currently 1:1 with ApiStyle. */
-export type BuiltInProviderId = ApiStyle;
+/** Provider identity is separate from wire format: Azure shares the OpenAI API. */
+export type BuiltInProviderId = ApiStyle | 'azure-openai';
 
 /** User-facing provider route. Authentication paths are intentionally distinct. */
 export type BuiltInProviderRouteId =
   | 'openai-api'
+  | 'azure-openai-api'
   | 'codex-subscription'
   | 'gemini-api'
   | 'dashscope-api'
   | 'openrouter-api'
   | 'ark-api'
   | 'meta-subscription'
-  | 'meta-api';
+  | 'meta-api'
+  | 'mai-api';
 
 /** A user-defined image-generation provider. */
 export type CustomProviderAuth =
@@ -205,7 +208,7 @@ export type ResolvedProvider = {
   headers?: Record<string, string>;
   /** Authentication behavior selected by a user-facing provider route. */
   authMode?: 'auto' | 'oauth' | 'api-key';
-  /** Custom-provider authentication policy; built-ins leave this unset. */
+  /** Credential wire policy; Azure's built-in route uses an api-key header. */
   customAuth?: CustomProviderAuth;
   /** Display label. */
   name: string;

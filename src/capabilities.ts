@@ -65,16 +65,17 @@ export function capabilitiesForApi(
   }
   if (api !== 'dashscope' && api !== 'ark') delete clean.supportsWatermark;
   if (api !== 'ark') delete clean.supportsSeries;
+  if (api === 'mai') clean.nMax = 1;
   return clean;
 }
 
 export function genericCapabilitiesForApi(api: ApiStyle): ImageModelCapabilities {
   return {
     ...(api === 'gemini' ? { aspectRatios: ['auto'] } : {}),
-    nMax: api === 'ark' || api === 'meta' ? 1 : MAX_GENERATED_IMAGES,
+    nMax: api === 'ark' || api === 'meta' || api === 'mai' ? 1 : MAX_GENERATED_IMAGES,
     nMaxSource: 'extension',
-    maxReferenceImages: MAX_REFERENCE_IMAGE_INPUTS,
-    inputFormats: ['PNG', 'JPEG', 'GIF', 'WEBP'],
+    maxReferenceImages: api === 'mai' ? 5 : MAX_REFERENCE_IMAGE_INPUTS,
+    inputFormats: api === 'mai' ? ['PNG', 'JPEG'] : ['PNG', 'JPEG', 'GIF', 'WEBP'],
     inputMaxBytes: MAX_IMAGE_BYTES,
     referenceLimitsSource: 'extension',
   };
@@ -108,14 +109,14 @@ function formatRatio(value: number): string {
  * schema must hide the param entirely in that case. The documented limits are
  * stated as advice ("documented…"); the provider remains the authority.
  */
-export function capabilitySizeDescription(caps: ImageModelCapabilities): string | null {
+export function capabilitySizeDescription(caps: ImageModelCapabilities, exampleSize?: string): string | null {
   if (hasAspectRatioKnob(caps)) return null;
   if (caps.sizes) {
     return `Image size. Documented values: ${caps.sizes.join(', ')}. Omit to use the model default.`;
   }
   const range = caps.sizeRange;
   if (!range) return null;
-  const example = range.separator === '*' ? '2048*2048' : '2048x2048';
+  const example = exampleSize ?? (range.separator === '*' ? '2048*2048' : '2048x2048');
   const parts = [
     `Image size as "<width>${range.separator}<height>" (e.g. "${example}"). Documented limits: total pixels ${range.minArea}–${range.maxArea}`,
   ];

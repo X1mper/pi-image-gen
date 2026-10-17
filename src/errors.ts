@@ -299,9 +299,11 @@ function providerBaseUrlLocator(provider: ResolvedProvider): string {
 
 const BUILT_IN_ENV_VAR: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
+  'azure-openai': 'AZURE_OPENAI_API_KEY',
   gemini: 'GEMINI_API_KEY',
   dashscope: 'DASHSCOPE_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   ark: 'ARK_API_KEY',
   meta: 'META_API_KEY',
+  mai: 'AZURE_MAI_API_KEY',
 };

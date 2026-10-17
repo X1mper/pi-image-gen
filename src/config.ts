@@ -4,11 +4,13 @@ import { loadPiSettings } from '@amaster.ai/pi-shared/settings';
 import { sanitizeCapabilities } from './capabilities.js';
 import { canUseMetaOAuth } from './providers/meta.js';
 import {
+  AZURE_OPENAI_CAPABILITIES,
   BUILT_IN_MODELS,
   DEFAULT_API_STYLE,
   DEFAULT_BASE_URL,
   ENV_VARS,
   findBuiltInModel,
+  modelsForProvider,
   PROVIDER_DISPLAY_NAME,
 } from './models.js';
 import type {
@@ -129,7 +131,9 @@ function buildBuiltInProvider(
   const provider: ResolvedProvider = {
     id,
     api: DEFAULT_API_STYLE[id],
-    baseUrl: configuredBaseUrl ?? DEFAULT_BASE_URL[id],
+    baseUrl: configuredBaseUrl ??
+      (id === 'azure-openai' ? trimCredential(process.env.AZURE_OPENAI_ENDPOINT) : undefined) ??
+      DEFAULT_BASE_URL[id],
     name: PROVIDER_DISPLAY_NAME[id],
     builtIn: true,
   };
@@ -295,10 +299,9 @@ function resolveModelUnscoped(
     const customRaw = isReservedProviderRouteId(providerKey)
       ? undefined
       : customProviderRaw(settings, providerKey);
-    // `meta` was a valid custom prefix before this release added a built-in
-    // provider with that name. Preserve that route without changing the
-    // established built-in-first precedence of older provider prefixes.
-    if (providerKey === 'meta' && customRaw) {
+    // Preserve existing custom prefixes when adding a built-in provider with
+    // the same name, without changing older providers' precedence.
+    if ((providerKey === 'meta' || providerKey === 'mai' || providerKey === 'azure-openai') && customRaw) {
       const provider = buildCustomProvider(providerKey, customRaw);
       if (provider) return { provider, remoteId, requestedId: requested };
     }
@@ -309,12 +312,11 @@ function resolveModelUnscoped(
       const provider = buildBuiltInProvider(providerKey, settings);
       if (provider) {
         const resolved: ResolvedModel = { provider, remoteId, requestedId: requested };
-        const known = BUILT_IN_MODELS.find(
-          (candidate) =>
-            candidate.provider === providerKey &&
-            (candidate.id === remoteId || candidate.remoteId === remoteId),
+        const known = modelsForProvider(providerKey).find(
+          (candidate) => candidate.id === remoteId || candidate.remoteId === remoteId,
         );
         if (known?.capabilities) resolved.capabilities = known.capabilities;
+        else if (providerKey === 'azure-openai') resolved.capabilities = AZURE_OPENAI_CAPABILITIES;
         return resolved;
       }
     }
@@ -353,6 +355,7 @@ const BUILT_IN_ROUTES: Array<{
   authentication: 'api-key' | 'subscription';
 }> = [
   { id: 'openai-api', label: 'OpenAI API', providerId: 'openai', authentication: 'api-key' },
+  { id: 'azure-openai-api', label: 'Azure OpenAI API', providerId: 'azure-openai', authentication: 'api-key' },
   {
     id: 'codex-subscription',
     label: 'ChatGPT Codex subscription',
@@ -380,15 +383,18 @@ const BUILT_IN_ROUTES: Array<{
     authentication: 'subscription',
   },
   { id: 'meta-api', label: 'Meta API', providerId: 'meta', authentication: 'api-key' },
+  { id: 'mai-api', label: 'Microsoft MAI Azure API', providerId: 'mai', authentication: 'api-key' },
 ];
 
 const LEGACY_ROUTE_ALIASES: Partial<Record<BuiltInProviderId, BuiltInProviderRouteId>> = {
   openai: 'openai-api',
+  'azure-openai': 'azure-openai-api',
   codex: 'codex-subscription',
   gemini: 'gemini-api',
   dashscope: 'dashscope-api',
   openrouter: 'openrouter-api',
   ark: 'ark-api',
+  mai: 'mai-api',
 };
 
 /** Return the canonical route id, preserving declared custom-provider ids. */
@@ -405,7 +411,7 @@ export function canonicalProviderRouteId(
 
 export function listProviderRoutes(settings: ImageGenSettings): ProviderRoute[] {
   const routes: ProviderRoute[] = BUILT_IN_ROUTES.map((route) => {
-    const models = BUILT_IN_MODELS.filter((model) => model.provider === route.providerId).map(
+    const models = modelsForProvider(route.providerId).map(
       (model) => (route.providerId === 'codex' ? (model.remoteId ?? model.id) : model.id),
     );
     const provider = buildBuiltInProvider(route.providerId, settings);
@@ -415,7 +421,7 @@ export function listProviderRoutes(settings: ImageGenSettings): ProviderRoute[] 
       providerId: route.providerId,
       authentication: route.authentication,
       modelIds: [...new Set(models)],
-      acceptsAnyModel: route.providerId === 'openrouter',
+      acceptsAnyModel: route.providerId === 'openrouter' || route.providerId === 'mai' || route.providerId === 'azure-openai',
       configuredBySettings: route.authentication === 'api-key' && Boolean(provider?.apiKey),
     };
   });
@@ -514,9 +520,8 @@ function resolveModelOnRoute(
     explicitlyQualified = true;
   }
   if (!requested) return { error: 'Model id is empty.' };
-  const model = BUILT_IN_MODELS.find(
+  const model = modelsForProvider(route.providerId).find(
     (candidate) =>
-      candidate.provider === route.providerId &&
       (candidate.id === requested ||
         candidate.aliases?.includes(requested) ||
         (route.providerId === 'codex' && candidate.remoteId === requested)),
@@ -527,6 +532,8 @@ function resolveModelOnRoute(
     !model &&
     route.authentication === 'api-key' &&
     route.providerId !== 'openrouter' &&
+    route.providerId !== 'mai' &&
+    route.providerId !== 'azure-openai' &&
     knownForeignModel &&
     knownForeignModel.provider !== route.providerId
   ) {
@@ -535,20 +542,25 @@ function resolveModelOnRoute(
     };
   }
 
-  // OpenRouter is an explicit pass-through route and does not maintain a fixed
-  // model catalog. Other built-in routes allow explicitly qualified unknown
+  // OpenRouter and Azure providers accept arbitrary remote ids (Azure uses
+  // deployment names, which need not match the catalog). Other routes allow qualified unknown
   // ids for private deployments, but never known models owned by another route.
   if (
     !model &&
-    (route.providerId === 'openrouter' ||
+    (route.providerId === 'openrouter' || route.providerId === 'mai' || route.providerId === 'azure-openai' ||
       (explicitlyQualified && route.authentication === 'api-key'))
   ) {
     const provider = buildBuiltInProvider(route.providerId, settings)!;
     if (route.id === 'meta-api') provider.authMode = 'api-key';
-    return { provider, remoteId: requested, requestedId: requested };
+    return {
+      provider,
+      remoteId: requested,
+      requestedId: requested,
+      ...(route.providerId === 'azure-openai' ? { capabilities: AZURE_OPENAI_CAPABILITIES } : {}),
+    };
   }
   if (!model) {
-    const available = BUILT_IN_MODELS.filter((candidate) => candidate.provider === route.providerId).map(
+    const available = modelsForProvider(route.providerId).map(
       (candidate) => (route.providerId === 'codex' ? (candidate.remoteId ?? candidate.id) : candidate.id),
     );
     return {
@@ -620,11 +632,13 @@ export function listConfiguredProviders(settings: ImageGenSettings): ConfiguredP
   const out: ConfiguredProvider[] = [];
   for (const id of [
     'openai',
+    'azure-openai',
     'gemini',
     'dashscope',
     'openrouter',
     'ark',
     'meta',
+    'mai',
   ] as BuiltInProviderId[]) {
     const provider = buildBuiltInProvider(id, settings);
     if (provider?.apiKey) out.push({ ...provider, catchAll: false, modelCount: 0 });
@@ -734,18 +748,21 @@ function isCustomApiStyle(value: unknown): value is CustomApiStyle {
     value === 'dashscope' ||
     value === 'openrouter' ||
     value === 'ark' ||
-    value === 'meta'
+    value === 'meta' ||
+    value === 'mai'
   );
 }
 
 function isBuiltInProviderId(value: string): value is BuiltInProviderId {
   return (
     value === 'openai' ||
+    value === 'azure-openai' ||
     value === 'gemini' ||
     value === 'dashscope' ||
     value === 'openrouter' ||
     value === 'ark' ||
     value === 'meta' ||
+    value === 'mai' ||
     value === 'codex'
   );
 }

@@ -1,6 +1,6 @@
 import type { GenerationMetadata } from '../types.js';
 
-export type SpriteOutputFormat = 'apng' | 'frames';
+export type SpriteOutputFormat = 'png' | 'apng' | 'webp' | 'frames';
 export type SpriteAlignment = 'center' | 'bottom' | 'feet';
 export type SpriteScaleStrategy = 'fit' | 'preserve';
 export type SpriteComponentMode = 'largest' | 'all';
@@ -74,7 +74,7 @@ export type SpriteGenerateResult = {
   normalizedSheet?: string;
   frames: SpriteFrameResult[];
   animation?: {
-    format: 'apng';
+    format: 'apng' | 'webp';
     path: string;
     frameDurationMs: number;
   };

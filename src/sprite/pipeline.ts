@@ -9,6 +9,7 @@ import type { GenerateImageParams, ImageModelCapabilities } from '../types.js';
 import { buildSpritePrompt, spriteGenerationControls } from './prompt.js';
 import { encodePng, processSpriteSheet } from './raster.js';
 import { normalizeSpriteSettings, planSprite } from './settings.js';
+import { encodeWebp } from './webp.js';
 import type { SpriteGenerateParams, SpriteGenerateResult } from './types.js';
 
 export type SpriteProgressPhase =
@@ -42,7 +43,8 @@ export async function runSpritePipeline(params: SpriteGenerateParams, options: S
   try {
     const prompt = buildSpritePrompt(params, plan);
     await safeWrite(resolve(runDirectory, 'prompt-used.txt'), `${prompt}\n`, options.signal);
-    const controls = spriteGenerationControls(params, plan, modelCapabilities ?? null);
+    const resolvedModel = resolveModel(options.settings.defaultModel ?? '', options.settings);
+    const controls = spriteGenerationControls(params, plan, modelCapabilities ?? null, 'error' in resolvedModel ? undefined : resolvedModel.provider.api);
     const generationParams: GenerateImageParams = {
       prompt,
       ...(params.image ? { image: params.image } : {}),
@@ -109,11 +111,23 @@ export async function runSpritePipeline(params: SpriteGenerateParams, options: S
     const normalizedSheet = resolve(runDirectory, 'sheet-transparent.png');
     await safeWrite(normalizedSheet, raster.normalizedSheet, options.signal);
     let animation: SpriteGenerateResult['animation'];
-    if (raster.animation) {
+    let animationBytes = raster.animation;
+    if (plan.format === 'webp' && !raster.issues.some((issue) => issue.severity === 'error')) {
       options.onProgress?.('encoding-animation');
-      const path = resolve(runDirectory, 'animation.apng');
-      await safeWrite(path, raster.animation, options.signal);
-      animation = { format: 'apng', path, frameDurationMs: plan.frameDurationMs };
+      try {
+        animationBytes = await encodeWebp(raster.frames, plan.frameDurationMs);
+      } catch {
+        raster.issues.push({ code: 'webp-encoding', severity: 'error', message: 'Lossless animated WebP encoding or verification failed. PNG assets were preserved; check the Sharp installation or use APNG.' });
+        raster.metrics.accepted = false;
+      }
+      checkAbort(options.signal);
+    }
+    if (animationBytes) {
+      options.onProgress?.('encoding-animation');
+      const format = plan.format === 'webp' ? 'webp' : 'apng';
+      const path = resolve(runDirectory, `animation.${format}`);
+      await safeWrite(path, animationBytes, options.signal);
+      animation = { format, path, frameDurationMs: plan.frameDurationMs };
     }
     const accepted = !raster.issues.some((issue) => issue.severity === 'error');
     const metadata = resultMetadata(generated.metadata, startedAt);

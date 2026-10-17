@@ -1,6 +1,6 @@
 ---
 name: sprite-gen
-description: "Generate one coherent sprite action sheet with the optional sprite_generate tool, then use its normalized PNG frames and APNG output."
+description: "Generate one coherent sprite action sheet with the optional sprite_generate tool, then use its normalized PNG frames and optional APNG or animated WebP output."
 ---
 
 # Sprite generation
@@ -49,13 +49,14 @@ For references, label each role: `Image 1: canonical identity and costume`, `Ima
 - `align: "feet"` suits grounded characters; `center` suits floating effects and projectiles.
 - `scaleStrategy: "fit"` computes one shared scale. `preserve` keeps source scale unless one uniform safety reduction is needed.
 - `componentMode: "largest"` favors a main character. `all` preserves meaningful detached effect parts.
-- `format: "apng"` writes an animation after validation. `frames` writes only normalized PNG assets.
+- `format: "png"` returns a static normalized sprite sheet. `apng` (default) and `webp` write animations after validation; WebP is lossless and preserves transparency. Both animations require at least two frames. `frames` remains supported for normalized PNG assets. Every format preserves the PNG sheet and individual PNG frames.
+- Set `spriteGeneration.defaultFormat` in settings to choose the default; per-call `format` overrides it.
 - `strictValidation: true` blocks animation approval for clipping and serious motion findings.
 - Model-aware `size`, `aspectRatio`, `imageSize`, and `quality` appear only when supported.
 
 ## Results and retries
 
-The tool always makes at most one provider generation request and never regenerates automatically. If deterministic checks reject a generated sheet, report the issue codes, show the preserved raw sheet using the tool's returned Markdown, and ask before making another paid request.
+The tool always makes at most one provider generation request and never regenerates automatically. If deterministic checks reject a generated sheet, report the issue codes and show the preserved raw sheet using the tool's returned Markdown.
 
 Local checks cover frame count, alpha, clipping, shared scale, anchors, duplicate silhouettes, motion spikes, and loop closure. They cannot prove facial identity, costume accuracy, anatomy, or acting quality. Ask the user to inspect those details.
 

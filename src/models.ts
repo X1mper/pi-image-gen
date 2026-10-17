@@ -175,6 +175,34 @@ export const BUILT_IN_MODELS: BuiltInModelEntry[] = [
     },
   },
 
+  // Microsoft Foundry MAI image catalog (preview). API `model` is the Azure
+  // deployment name; these entries describe deployments named after the model.
+  // Versions: 2.5/Flash 2026-06-02, Pro 2026-06-19, 2.6/Flash 2026-07-31.
+  // https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image
+  ...([
+    'MAI-Image-2.5',
+    'MAI-Image-2.5-Flash',
+    'MAI-Image-2.5-Pro',
+    'MAI-Image-2.6',
+    'MAI-Image-2.6-Flash',
+  ] as const).map((id) => ({
+    id,
+    provider: 'mai' as const,
+    capabilities: {
+      sizeRange: {
+        separator: 'x' as const,
+        minArea: 768 * 768,
+        maxArea: id.startsWith('MAI-Image-2.6') ? 2_359_296 : 1_048_576,
+      },
+      nMax: 1,
+      maxReferenceImages: 5,
+      inputFormats: ['PNG', 'JPEG'],
+      inputMaxBytes: 20 * MB,
+      // Microsoft publishes count/formats, not a per-file byte limit.
+      referenceLimitsSource: 'extension' as const,
+    },
+  })),
+
   // Google Gemini "Nano Banana" image generation. Gemini has no pixel-size
   // knob — output shape is aspectRatio + imageSize tier (uppercase "K").
   // Per https://ai.google.dev/gemini-api/docs/image-generation:
@@ -387,6 +415,57 @@ export const BUILT_IN_MODELS: BuiltInModelEntry[] = [
   },
 ];
 
+/** Common Azure GPT Image controls for deployments with custom names. */
+export const AZURE_OPENAI_CAPABILITIES = {
+  qualityValues: ['low', 'medium', 'high', 'auto'],
+  // Microsoft's image guide explicitly excludes WebP despite the broader
+  // wire enum in its REST reference. Keep Azure's advertised formats narrow.
+  outputFormats: ['png', 'jpeg'],
+  backgroundValues: ['auto', 'transparent', 'opaque'],
+  supportsOutputCompression: true,
+  supportsMask: true,
+  nMax: 10,
+  maxReferenceImages: 16,
+  inputFormats: ['PNG', 'JPEG'],
+  inputMaxBytes: 20 * MB,
+  referenceLimitsSource: 'extension',
+} satisfies ImageModelCapabilities;
+
+// Keep Azure metadata separate: an unscoped gpt-image-2 must still choose the
+// public OpenAI route. Azure API `model` is the deployment name, not an alias.
+// https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/dall-e
+const AZURE_OPENAI_MODELS: BuiltInModelEntry[] = [
+  ...BUILT_IN_MODELS.filter((model) =>
+    model.provider === 'openai' &&
+    ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'].includes(model.id),
+  ).map((model) => ({
+    ...model,
+    provider: 'azure-openai' as const,
+    capabilities: {
+      ...AZURE_OPENAI_CAPABILITIES,
+      ...model.capabilities,
+      outputFormats: AZURE_OPENAI_CAPABILITIES.outputFormats,
+      inputFormats: AZURE_OPENAI_CAPABILITIES.inputFormats,
+      inputMaxBytes: AZURE_OPENAI_CAPABILITIES.inputMaxBytes,
+      referenceLimitsSource: 'extension' as const,
+    },
+  })),
+  ...['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5'].map((id) => ({
+    id,
+    provider: 'azure-openai' as const,
+    capabilities: {
+      ...AZURE_OPENAI_CAPABILITIES,
+      sizes: ['auto', '1024x1024', '1536x1024', '1024x1536'],
+    },
+  })),
+];
+
+export function modelsForProvider(id: BuiltInProviderId): BuiltInModelEntry[] {
+  return id === 'azure-openai'
+    ? AZURE_OPENAI_MODELS
+    : BUILT_IN_MODELS.filter((model) => model.provider === id);
+}
+
 /** Resolve a model id or alias against the built-in registry. */
 export function findBuiltInModel(idOrAlias: string): BuiltInModelEntry | undefined {
   return BUILT_IN_MODELS.find(
@@ -401,34 +480,43 @@ export const DEFAULT_BASE_URL: Record<BuiltInProviderId, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   ark: 'https://ark.cn-beijing.volces.com/api/v3',
   meta: 'https://api.meta.ai/v1',
+  // Azure resource-specific endpoint: intentionally no shared service default.
+  mai: '',
+  'azure-openai': '',
   codex: 'https://chatgpt.com/backend-api/codex/images',
 };
 
 export const DEFAULT_API_STYLE: Record<BuiltInProviderId, ApiStyle> = {
   openai: 'openai',
+  'azure-openai': 'openai',
   gemini: 'gemini',
   dashscope: 'dashscope',
   openrouter: 'openrouter',
   ark: 'ark',
   meta: 'meta',
+  mai: 'mai',
   codex: 'codex',
 };
 
 export const ENV_VARS: Partial<Record<BuiltInProviderId, string>> = {
   openai: 'OPENAI_API_KEY',
+  'azure-openai': 'AZURE_OPENAI_API_KEY',
   gemini: 'GEMINI_API_KEY',
   dashscope: 'DASHSCOPE_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   ark: 'ARK_API_KEY',
   meta: 'META_API_KEY',
+  mai: 'AZURE_MAI_API_KEY',
 };
 
 export const PROVIDER_DISPLAY_NAME: Record<BuiltInProviderId, string> = {
   openai: 'OpenAI',
+  'azure-openai': 'Azure OpenAI',
   gemini: 'Google Gemini',
   dashscope: 'Alibaba DashScope',
   openrouter: 'OpenRouter',
   ark: 'Volcengine Ark',
   meta: 'Meta Model API',
+  mai: 'Microsoft MAI (Azure)',
   codex: 'ChatGPT Plus/Pro (Codex)',
 };

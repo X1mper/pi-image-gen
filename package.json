@@ -1,7 +1,7 @@
 {
   "name": "@abhishek944/pi-image-gen",
-  "version": "0.4.2",
-  "description": "Image and optional sprite-sheet generation for Pi via ChatGPT Codex subscriptions, OpenAI, Gemini, Qwen, Seedream, Meta Muse Image, OpenRouter, and custom providers.",
+  "version": "0.5.0",
+  "description": "Image and optional sprite-sheet generation for Pi via ChatGPT Codex subscriptions, OpenAI, Azure OpenAI, Gemini, Qwen, Seedream, Meta Muse Image, Microsoft MAI on Azure, OpenRouter, and custom providers.",
   "keywords": [
     "pi-package",
     "pi",
@@ -68,6 +68,7 @@
   },
   "dependencies": {
     "@amaster.ai/pi-shared": "^0.1.10",
+    "sharp": "^0.35.5",
     "upng-js": "^2.1.0"
   },
   "peerDependencies": {
