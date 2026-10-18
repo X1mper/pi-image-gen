@@ -1,6 +1,6 @@
 {
   "name": "@abhishek944/pi-image-gen",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Image and optional sprite-sheet generation for Pi via ChatGPT Codex subscriptions, OpenAI, Azure OpenAI, Gemini, Qwen, Seedream, Meta Muse Image, Microsoft MAI on Azure, OpenRouter, and custom providers.",
   "keywords": [
     "pi-package",
@@ -34,10 +34,21 @@
       "import": "./dist/extension.js",
       "default": "./dist/extension.js"
     },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
+    "./durable": {
+      "types": "./dist/durable.d.ts",
+      "import": "./dist/durable.js",
+      "default": "./dist/durable.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "docs/portable-and-durable.md",
     "skills",
     "preview.png",
     "README.md",
@@ -72,11 +83,15 @@
     "upng-js": "^2.1.0"
   },
   "peerDependencies": {
+    "@earendil-works/pi-durable": "1.1.0",
     "@earendil-works/pi-ai": ">=0.80.10",
     "@earendil-works/pi-coding-agent": ">=0.79.1",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
+    "@earendil-works/pi-durable": {
+      "optional": true
+    },
     "@earendil-works/pi-ai": {
       "optional": true
     },
@@ -88,6 +103,7 @@
     }
   },
   "devDependencies": {
+    "@earendil-works/pi-durable": "1.1.0",
     "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
     "typebox": "*",
