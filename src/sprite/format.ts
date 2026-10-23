@@ -1,4 +1,5 @@
 import type { SpriteGenerateResult } from './types.js';
+import { formatAccounting } from '../format-accounting.js';
 
 export function formatSpriteToolResult(result: SpriteGenerateResult, markdownImageUrl: (path: string) => string): string {
   const lines: string[] = result.validation.accepted
@@ -11,6 +12,7 @@ export function formatSpriteToolResult(result: SpriteGenerateResult, markdownIma
   lines.push('', 'Show the useful artifacts to the user as inline markdown — copy these lines verbatim:', '', `![raw sprite sheet](${markdownImageUrl(result.rawSheet)})`);
   if (result.normalizedSheet) lines.push(`![normalized sprite sheet](${markdownImageUrl(result.normalizedSheet)})`);
   if (result.animation) lines.push(`![sprite animation](${markdownImageUrl(result.animation.path)})`);
+  lines.push(...formatAccounting(result.metadata));
   lines.push('', `Run directory: ${result.runDirectory}`);
   if (!result.validation.accepted) lines.push('Inspect identity, anatomy, costume, and motion.');
   return lines.join('\n');

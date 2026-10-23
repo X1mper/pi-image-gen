@@ -65,6 +65,7 @@ export function createImageExtension<Stored>(host: DurableImageHost<Stored>): Ex
               loadOutput: scopedHost.loadOutput.bind(scopedHost),
               store: scopedHost.store.bind(scopedHost),
               ...(cloudflareRun ? { cloudflareRun } : {}),
+              ...(scopedHost.calculateCost ? { calculateCost: scopedHost.calculateCost.bind(scopedHost) } : {}),
               ...(scopedHost.timeoutMs !== undefined ? { timeoutMs: scopedHost.timeoutMs } : {}),
               ...(scopedHost.limits ? { limits: scopedHost.limits } : {}),
               ...(signal ? { signal } : {}),

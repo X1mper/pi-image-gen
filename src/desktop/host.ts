@@ -9,6 +9,7 @@ import type { ImageHost, Original, PreparedImageRequest } from '../core/protocol
 import type { GenerateImageOptions } from './options.js';
 import type { desktopSink } from './output-sink.js';
 import { desktopTimeout } from './configuration.js';
+import { desktopCostCalculator } from './pricing.js';
 
 export function desktopHost(
   request: PreparedImageRequest,
@@ -17,7 +18,9 @@ export function desktopHost(
 ): ImageHost<GeneratedImage> {
   if (request.route.kind !== 'provider') throw new ImageGenError('Desktop provider route is missing.', 'invalid desktop route');
   const trustedHosts = trustedHostsFromUrls(request.route.provider.baseUrl);
+  const calculateCost = desktopCostCalculator(request, options.modelRegistry);
   return {
+    ...(calculateCost ? { calculateCost } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     timeoutMs: desktopTimeout(options.settings.requestTimeoutMs),
     providerFetch: options.fetchImpl ?? fetch,

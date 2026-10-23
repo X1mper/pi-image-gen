@@ -11,7 +11,11 @@ import type { ResolvedProvider } from '../types/provider.js';
  */
 export class ImageGenError extends Error {
   readonly logSummary: string;
-  constructor(message: string, logSummary: string) {
+  constructor(
+    message: string,
+    logSummary: string,
+    readonly fallbackReason?: 'missing-credentials' | 'auth' | 'not-found' | 'rate-limit',
+  ) {
     super(message);
     this.name = 'ImageGenError';
     this.logSummary = logSummary.split(/[\r\n]/, 1)[0] || 'image generation failed';

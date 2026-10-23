@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadPiSettings } from '@amaster.ai/pi-shared/settings';
 import { sanitizeCapabilities } from './capabilities.js';
+import { ImageGenError } from './errors.js';
+import { imageSettingsFiles } from './settings-paths.js';
 import { canUseMetaOAuth } from './providers/meta.js';
 import {
   AZURE_OPENAI_CAPABILITIES,
@@ -21,12 +23,20 @@ import type {
   CustomImageProvider,
   CustomProviderAuth,
   ImageGenSettings,
+  ImageRouteSelection,
   ImageModelCapabilities,
   ResolvedModel,
   ResolvedProvider,
 } from './types.js';
 
 const SETTINGS_KEY = 'pi-image-gen';
+export const IMAGE_CONFIG_VERSION = 2;
+
+export function validateImageConfigVersion(version: unknown): void {
+  if (version !== undefined && version !== 1 && version !== IMAGE_CONFIG_VERSION) {
+    throw new ImageGenError('Unsupported pi-image-gen config version. This extension supports unversioned/version 1 and version 2 settings; upgrade the extension before using a newer format.', 'unsupported image config version');
+  }
+}
 
 /**
  * Conservative capability fallback for custom models that declare partial
@@ -74,6 +84,100 @@ function inheritCapabilities(
 }
 
 export function loadImageGenSettings(cwd: string, projectTrusted = false): ImageGenSettings {
+  // Resolve defaults per layer, so migrating a lower file cannot hide a higher
+  // file's still-legacy override. Shared loading retains all other merge/auth rules.
+  const defaults: Pick<ImageGenSettings, 'defaultProvider' | 'defaultModel'> = {};
+  const seen = new Set<string>();
+  for (const file of imageSettingsFiles(cwd)) {
+    if ((file.scope === 'project' && !projectTrusted) || seen.has(file.path)) continue;
+    seen.add(file.path);
+    let section: unknown;
+    try {
+      if (!statSync(file.path).isFile()) {
+        throw new ImageGenError('Image settings cannot load from a non-regular settings file. Replace the special file with a regular JSON file.', 'non-regular image settings file');
+      }
+      const root: unknown = JSON.parse(readFileSync(file.path, 'utf8'));
+      section = isRecord(root) ? root[SETTINGS_KEY] : undefined;
+    } catch (error) {
+      if (error instanceof ImageGenError) throw error;
+      continue; // The existing shared/strict loader owns malformed-file handling.
+    }
+    if (!isRecord(section)) continue;
+    validateImageConfigVersion(section.version);
+    const expanded = (value: unknown): unknown => file.scope === 'project' || typeof value !== 'string'
+      ? value : value.replace(/\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)/g, (_match, braced: string | undefined, bare: string | undefined) => {
+        const [name = '', ...rest] = (braced ?? bare ?? '').split(':-');
+        return process.env[name] || rest.join(':-');
+      });
+    const selected = section.default;
+    const layer = normalizeImageGenSettings({
+      ...(selected !== undefined ? { default: isRecord(selected)
+        ? { ...selected, provider: expanded(selected.provider), model: expanded(selected.model) }
+        : selected } : {}),
+      ...(section.defaultProvider !== undefined ? { defaultProvider: expanded(section.defaultProvider) } : {}),
+      ...(section.defaultModel !== undefined ? { defaultModel: expanded(section.defaultModel) } : {}),
+    } as ImageGenSettings);
+    if (layer.defaultProvider !== undefined) defaults.defaultProvider = layer.defaultProvider;
+    if (layer.defaultModel !== undefined) defaults.defaultModel = layer.defaultModel;
+  }
+  const { default: _selected, ...effective } = loadRawImageGenSettings(cwd, projectTrusted);
+  return normalizeImageGenSettings({ ...effective, ...defaults });
+}
+
+/** Resolve the new default pair once; downstream routing keeps its legacy contract. */
+export function normalizeImageGenSettings(settings: ImageGenSettings): ImageGenSettings {
+  validateImageConfigVersion(settings.version);
+  const { default: selected, ...effective } = settings;
+  if (selected === undefined) return effective;
+  const route = parseImageRoute(selected, 'default');
+  return { ...effective, defaultProvider: route.provider, defaultModel: route.model };
+}
+
+function parseImageRoute(value: unknown, location: string): ImageRouteSelection {
+  if (!isRecord(value) || typeof value.provider !== 'string' || !value.provider.trim() ||
+      typeof value.model !== 'string' || !value.model.trim()) {
+    throw new ImageGenError(`pi-image-gen.${location} must contain non-empty provider and model strings.`, 'invalid image route settings');
+  }
+  return { provider: value.provider.trim(), model: value.model.trim() };
+}
+
+/** Validate every configured pair before any route in the selected list is called. */
+export function configuredImageRoutes(settings: ImageGenSettings, kind: 'fallback' | 'compare'): ImageRouteSelection[] {
+  const effective = normalizeImageGenSettings(settings);
+  const raw: unknown = effective[kind];
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw new ImageGenError(`pi-image-gen.${kind} must be an array of provider/model pairs.`, 'invalid image route list');
+  }
+  const seen = new Set<string>();
+  let ambiguousMetaModel: string | undefined;
+  if (kind === 'fallback' && typeof effective.defaultModel === 'string') {
+    const primary = resolveModel(effective.defaultModel, effective);
+    if (!('error' in primary)) {
+      const provider = canonicalProviderRouteId(effective.defaultProvider ?? primary.provider.id, effective) ?? primary.provider.id;
+      seen.add(`${provider}\0${primary.remoteId}`);
+      if (!effective.defaultProvider && primary.provider.builtIn && primary.provider.id === 'meta') {
+        ambiguousMetaModel = primary.remoteId;
+      }
+    }
+  }
+  return raw.map((value, index) => {
+    const route = parseImageRoute(value, `${kind}[${index}]`);
+    const provider = canonicalProviderRouteId(route.provider, effective);
+    if (!provider) throw new ImageGenError(`pi-image-gen.${kind}[${index}] has an unknown or ambiguous provider route. Run /image-gen list.`, 'invalid image route provider');
+    const resolved = resolveModel(route.model, { ...effective, defaultProvider: provider });
+    if ('error' in resolved) throw new ImageGenError(resolved.error, 'invalid image route model');
+    if (ambiguousMetaModel === resolved.remoteId && resolved.provider.builtIn && resolved.provider.id === 'meta') {
+      throw new ImageGenError('A legacy Meta default may use the same credential as this fallback. Select an explicit meta-api or meta-subscription default before configuring the same Meta model as a fallback.', 'ambiguous duplicate Meta route');
+    }
+    const identity = `${provider}\0${resolved.remoteId}`;
+    if (seen.has(identity)) throw new ImageGenError(`pi-image-gen.${kind}[${index}] repeats a route/model already selected. Remove the duplicate.`, 'duplicate image route');
+    seen.add(identity);
+    return { provider, model: route.model };
+  });
+}
+
+function loadRawImageGenSettings(cwd: string, projectTrusted: boolean): ImageGenSettings {
   let fallback: ImageGenSettings;
   try {
     fallback = loadPiSettings<ImageGenSettings>(SETTINGS_KEY, { cwd, projectTrusted });
@@ -215,6 +319,8 @@ export function resolveModel(
   modelOrAlias: string,
   settings: ImageGenSettings,
 ): ResolvedModel | { error: string } {
+  try { settings = normalizeImageGenSettings(settings); }
+  catch (error) { return { error: error instanceof ImageGenError ? error.message : 'Invalid image default settings.' }; }
   if (settings.defaultProvider !== undefined) {
     if (typeof settings.defaultProvider !== 'string') {
       return { error: 'pi-image-gen.defaultProvider must be a string.' };

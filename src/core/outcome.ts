@@ -10,8 +10,9 @@ export class ImageCoreError extends ImageGenError {
     readonly phase: 'pre-dispatch' | 'dispatched' | 'materializing',
     outcome: ImageDispatchOutcome,
     readonly metadata: ImageMetadata,
+    fallbackReason?: ImageGenError['fallbackReason'],
   ) {
-    super(message, summary);
+    super(message, summary, fallbackReason);
     this.name = 'ImageCoreError';
     this.outcome = Object.freeze({ ...outcome, stored: Object.freeze([...outcome.stored]) });
   }

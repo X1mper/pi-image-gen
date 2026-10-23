@@ -7,6 +7,7 @@ import {
   throwHttpError,
 } from '../errors.js';
 import { MAX_GENERATED_IMAGES } from '../image-input.js';
+import { coreMetadata, parseReportedCost, preferredReportedCost } from '../core/usage.js';
 import type {
   GenerateImageParams,
   ImageProviderAdapter,
@@ -155,13 +156,15 @@ export const geminiAdapter: ImageProviderAdapter = {
     const requestId = typeof json.responseId === 'string'
       ? json.responseId
       : res.headers.get('x-request-id') ?? undefined;
-    const usage = numericRecord(json.usageMetadata);
-    if (out[0] && (requestId || usage)) {
-      out[0].metadata = {
-        ...(requestId ? { requestId } : {}),
-        ...(usage ? { usage } : {}),
-      };
-    }
+    const usage = isRecord(json.usageMetadata) ? json.usageMetadata : undefined;
+    const reportedCost = preferredReportedCost(
+      parseReportedCost(json.cost, json.currency, 'provider-response'),
+      parseReportedCost(usage?.cost, usage?.currency, 'provider-response', json.currency),
+    );
+    if (out[0]) out[0].metadata = coreMetadata({
+      ...(requestId ? { requestId } : {}), reportedUsage: usage,
+      ...(reportedCost ? { reportedCost } : {}),
+    });
     if (out.length === 0) {
       const detail = `${provider.name} returned no image data — the model may have refused to generate. Tell the user to rephrase the prompt or try a different model.`;
       throw new ImageGenError(detail, `${providerLogLabel(provider)} returned no image data`);
@@ -175,14 +178,6 @@ function invalidResponseError(provider: ResolvedProvider): ImageGenError {
     `${provider.name} returned an invalid image response.`,
     `${providerLogLabel(provider)} returned an invalid image response`,
   );
-}
-
-function numericRecord(value: unknown): Record<string, number> | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).filter(
-    (entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]),
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

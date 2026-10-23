@@ -1,5 +1,6 @@
+import type { Cost, ImageTokenUsage, ReportedUsage } from '../core/protocol.js';
 import type { SpriteGenerationSettings } from '../sprite/types.js';
-import type { ImageDimensions, ImageModelCapabilities } from './image.js';
+import type { GenerateImageParams, ImageDimensions, ImageModelCapabilities } from './image.js';
 import type { ApiStyle, CustomApiStyle, CustomProviderAuth, ResolvedProvider } from './provider.js';
 
 /** Provider identity is separate from wire format: Azure shares the OpenAI API. */
@@ -69,10 +70,20 @@ export type BuiltInProviderOverride = {
   headers?: Record<string, string>;
 };
 
+export type ImageRouteSelection = { provider: string; model: string };
+
 export type ImageGenSettings = {
-  /** Authentication-specific provider route selected for the default model. */
+  /** Namespace schema version. Missing/version 1 are legacy; version 2 is current. */
+  version?: 1 | 2;
+  /** Preferred default route; takes precedence over the two legacy keys in its layer. */
+  default?: ImageRouteSelection;
+  /** Ordered alternatives used only after a safely classified failure. */
+  fallback?: ImageRouteSelection[];
+  /** Explicit comparison targets; never used by ordinary generation. */
+  compare?: ImageRouteSelection[];
+  /** Authentication-specific provider route selected for the default model (legacy). */
   defaultProvider?: string;
-  /** Default model id when the tool call does not pass `model`. */
+  /** Legacy default model id. The tool does not accept arbitrary model overrides. */
   defaultModel?: string;
   /**
    * Where to write generated images. Relative paths resolve against the session cwd.
@@ -94,8 +105,13 @@ export type ImageGenSettings = {
 export type GenerationMetadata = {
   durationMs: number;
   requestId?: string;
+  /** Legacy top-level numeric usage; use reportedUsage for nested cache details. */
   usage?: Record<string, number>;
+  reportedUsage?: ReportedUsage;
+  tokenUsage?: ImageTokenUsage;
+  /** Legacy provider-reported scalar only; estimates are kept in costDetails. */
   cost?: number;
+  costDetails?: Cost;
 };
 
 export type GeneratedImage = {
@@ -108,12 +124,27 @@ export type GeneratedImage = {
   dimensions?: ImageDimensions;
 };
 
+export type ImageRouteAttempt = {
+  route: ImageRouteSelection;
+  status: 'success' | 'failed';
+  error?: string;
+};
+
 export type ImageGenResult = {
   model: string;
   provider: string;
   images: GeneratedImage[];
   metadata?: GenerationMetadata;
+  /** Present when configured fallback was exercised, including the successful route. */
+  attempts?: ImageRouteAttempt[];
 };
+
+export type ImageCompareEntry =
+  | { route: ImageRouteSelection; status: 'success'; result: ImageGenResult }
+  | { route: ImageRouteSelection; status: 'failed' | 'cancelled'; error: string };
+
+export type ImageCompareResult = { entries: ImageCompareEntry[] };
+export type CompareImageParams = Pick<GenerateImageParams, 'prompt' | 'image' | 'filename' | 'outputDir'>;
 
 /** Result of resolving a model string to a provider + remote model id. */
 export type ResolvedModel = {

@@ -5,7 +5,7 @@ description: "Generate or edit raster images with the image_generate tool: photo
 
 # Image generation
 
-This skill guides use of the `image_generate` tool from `@abhishek944/pi-image-gen`. The active provider route and model are fixed by `pi-image-gen.defaultProvider` and `pi-image-gen.defaultModel` — the tool has **no `model` parameter**. Run `/image-gen list` to see configured authentication routes and their models; use `/image-gen use <provider> <model>` to persist a new pair and refresh the schema.
+This skill guides `image_generate` and explicit `image_compare` requests from `@abhishek944/pi-image-gen`. The primary pair is configured by `pi-image-gen.default: { provider, model }` (legacy `defaultProvider`/`defaultModel` also work). Neither tool accepts arbitrary model/provider arguments. Run `/image-gen list` to see the default, configured fallback/comparison pairs and available authentication routes; use `/image-gen use <provider> <model>` to update the default and refresh the schema. Current config schema is `version: 2` inside `pi-image-gen` (not the package version). Legacy settings remain readable. For an explicit migration request, preview with `/image-gen migrate --dry-run`, then apply `/image-gen migrate`; `--scope global|agent|project|all` selects files. Migration preserves raw scopes/placeholders, backs up changed files, removes obsolete default keys and refuses ambiguous or unsupported configurations. Do not run migration merely to generate an image or downgrade a future config version.
 
 ## When to use
 
@@ -34,6 +34,14 @@ Prefer editing or writing the native source when:
 2. **Strategy — one asset or many?**
    - `n` produces **variants of ONE prompt**, not distinct assets.
    - For several *different* assets, make **one `image_generate` call per asset**, each with its own prompt. Do not raise `n` to cover distinct subjects.
+
+## Fallback and explicit comparison
+
+- Ordinary generation uses `image_generate`. Configured `fallback` routes are tried in order only for a missing/unusable credential before generation or explicit generation HTTP 401/404/429. Do not automatically repeat a failed request after timeout, network loss, cancellation, policy refusal or output/storage failure; the provider may already have consumed quota.
+- Use `image_compare` only when the user explicitly asks to compare image models. It runs exactly the configured `compare` list, each entry may incur charges, and it neither changes the default nor substitutes fallback models. If the list is empty, ask the user to configure it; do not rewrite settings or invent targets.
+- Comparison takes the same `prompt` and optional `image` references, `filename`, and `outputDir`, using each model's native defaults. Report each labeled success/failure and its own cost when known. Different models may return different dimensions. Never turn an ordinary image request into a comparison.
+- Explicit controls are never silently dropped for fallback compatibility. If a fallback cannot honor a mask, size or other supplied control, explain the incompatibility rather than stripping it and generating again.
+- Native previews are display copies. Use saved originals for edits and exact-pixel inspection.
 
 ## Prompt structure
 
@@ -82,7 +90,7 @@ Start from a clean base prompt, then make **one targeted change at a time** and 
 ## Parameters
 
 - `prompt` (required) — what to draw or how to edit.
-- Meta Muse Image authentication — use the explicit `meta-subscription` route after `/login meta` from `pi-meta-oauth`, or `meta-api` with `META_API_KEY` (`MODEL_API_KEY` remains a legacy fallback). In a legacy model-only config, an active login takes precedence. Explicit routes never cross-fallback, and custom or overridden endpoints never receive the Pi login credential.
+- Meta Muse Image authentication — use the explicit `meta-subscription` route after `/login meta` from `pi-meta-oauth`, or `meta-api` with `META_API_KEY` (`MODEL_API_KEY` remains a legacy fallback). In a legacy model-only config, an active login takes precedence. An individual route never silently swaps authentication; only explicitly configured fallback pairs can authorize another route. Custom or overridden endpoints never receive the Pi login credential.
 - Azure OpenAI — select `azure-openai-api` with the Azure image deployment name. Configure `providers.azure-openai.baseUrl` as the resource root or `/openai/v1` (local `AZURE_OPENAI_ENDPOINT` is the fallback). Credentials come from `providers.azure-openai.apiKey` first, then `AZURE_OPENAI_API_KEY`; no public OpenAI key or Pi login fallback is used. The route shares OpenAI generation/edit controls with PNG/JPEG output (not WebP), uses the Azure `api-key` header and v1 preview endpoints, and rejects credential redirects. Arbitrary deployment names receive common GPT Image control advice; catalog-named deployments receive model-specific profiles.
 - Microsoft MAI (Azure) — select `mai-api` with the Azure deployment name. Configure `providers.mai.baseUrl` as the resource root or `/mai/v1`. Credentials come from `providers.mai.apiKey` first, then local `AZURE_MAI_API_KEY`; no Pi login is used. Current documented MAI 2.5/2.6 deployments support up to five PNG/JPEG edit inputs and return PNG. Omit `size` with references: MAI edits have no size control. Generation dimensions must each be at least 768; total pixels are capped at 1,048,576 for 2.5 and 2,359,296 for 2.6. Arbitrary deployment names do not identify their version; let Azure validate limits. Do not request quality, transparent background, masks, or multiple variants; PNG does not imply alpha support.
 - `image` — array of reference/target image paths or URLs. Extension-wide safety ceilings are 16 images, 20MB per input, and 128MB combined; providers may be stricter.

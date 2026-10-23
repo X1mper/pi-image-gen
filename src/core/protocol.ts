@@ -89,6 +89,19 @@ export type UsageValue =
 /** Bounded, validated nested provider usage (never an arbitrary raw body). */
 export type ReportedUsage = { [key: string]: UsageValue };
 
+/** Disjoint billing buckets: input excludes cache reads and writes. */
+export type ImageTokenUsage = {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+};
+
+/** Bind pi-ai calculateCost to the exact route's compatible catalog model; return USD. */
+export type ImageCostCalculator = (
+  usage: ImageTokenUsage,
+) => number | undefined | Promise<number | undefined>;
+
 export type Cost =
   | {
       readonly kind: 'reported';
@@ -123,6 +136,7 @@ export type ImageMetadata = {
   readonly durationMs: number;
   readonly requestId?: string;
   readonly reportedUsage?: ReportedUsage;
+  readonly tokenUsage?: ImageTokenUsage;
   readonly cost: Cost;
   readonly outputs: readonly ImageOutputDescriptor[];
   readonly quality?: string;
@@ -164,6 +178,8 @@ export interface ImageHost<Stored> {
   readonly limits?: { referenceBytes?: number; imageBytes?: number; responseBytes?: number };
   /** HTTP transport for provider-route adapters. */
   readonly providerFetch?: typeof fetch;
+  /** Optional official Pi calculator bound to compatible pricing for this exact route. */
+  readonly calculateCost?: ImageCostCalculator;
   /** Cloudflare AI binding transport for the catalog route. */
   readonly cloudflareRun?: CloudflareRun;
   /** Optional adapter override (desktop Codex etc.). */

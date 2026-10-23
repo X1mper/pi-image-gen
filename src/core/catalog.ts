@@ -75,11 +75,9 @@ async function parseCatalogResponse(raw: unknown, responseLimit?: number): Promi
     const outer = record(raw);
     if (!outer) throw invalidResponse();
     const result = outer.result === undefined ? outer : record(outer.result);
-    const gateway = record(outer.gatewayMetadata);
     const reportedCost = preferredReportedCost(
       parseReportedCost(result?.cost, result?.currency, 'provider-response', outer.currency),
       parseReportedCost(outer.cost, outer.currency, 'provider-response'),
-      parseReportedCost(gateway?.cost, gateway?.currency, 'gateway-estimate'),
     );
     metadata = coreMetadata({
       ...(requestId ? { requestId } : {}),

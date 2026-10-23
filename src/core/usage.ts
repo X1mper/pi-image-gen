@@ -1,5 +1,5 @@
-import type { RawImageResult, RawGenerationMetadata } from '../types/provider.js';
-import type { ReportedUsage, UsageValue } from './protocol.js';
+import type { ApiStyle, RawImageResult, RawGenerationMetadata } from '../types/provider.js';
+import type { ImageTokenUsage, ReportedUsage, UsageValue } from './protocol.js';
 
 /**
  * Bounded sanitizer for provider-reported usage. Only finite nonnegative
@@ -65,6 +65,46 @@ export function legacyNumericUsage(
   return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
 }
 
+/** Normalize known provider counters without charging cached input twice. */
+export function normalizeTokenUsage(usage: ReportedUsage | undefined, api: ApiStyle | 'catalog'): ImageTokenUsage | undefined {
+  if (!usage) return undefined;
+  let input: number | undefined;
+  let output: number | undefined;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  if (api === 'gemini') {
+    input = count(usage, 'promptTokenCount');
+    output = count(usage, 'candidatesTokenCount');
+    cacheRead = count(usage, 'cachedContentTokenCount') ?? 0;
+    if (output !== undefined) output += count(usage, 'thoughtsTokenCount') ?? 0;
+  } else if (['openai', 'openrouter', 'meta', 'catalog', 'codex'].includes(api)) {
+    input = count(usage, 'input_tokens', 'prompt_tokens');
+    output = count(usage, 'output_tokens', 'completion_tokens');
+    cacheRead = count(usage, 'input_tokens_details.cached_tokens', 'prompt_tokens_details.cached_tokens', 'cached_input_tokens') ?? 0;
+    cacheWrite = count(usage, 'input_tokens_details.cache_write_tokens', 'prompt_tokens_details.cache_write_tokens') ?? 0;
+    // OpenRouter's cached counter includes cache writes; OpenAI's read counter does not.
+    if (api === 'openrouter' && cacheWrite > 0) {
+      if (cacheWrite > cacheRead) return undefined;
+      cacheRead -= cacheWrite;
+    }
+  } else return undefined; // No established billing-counter semantics for this API.
+  if (input === undefined || output === undefined || input < cacheRead + cacheWrite) return undefined;
+  input -= cacheRead + cacheWrite;
+  if (![input, output, cacheRead, cacheWrite, input + output + cacheRead + cacheWrite].every(Number.isSafeInteger)) return undefined;
+  return { input, output, cacheRead, cacheWrite };
+}
+
+function count(usage: ReportedUsage, ...paths: string[]): number | undefined {
+  for (const path of paths) {
+    let value: UsageValue | undefined = usage;
+    for (const key of path.split('.')) {
+      value = value && typeof value === 'object' && !Array.isArray(value) ? value[key] : undefined;
+    }
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value;
+  }
+  return undefined;
+}
+
 export type ReportedCost = {
   amount: number;
   currency: string;
@@ -125,10 +165,9 @@ export function readCoreRawMetadata(
   };
 }
 
-/** Provider reports precede all estimates, preserving location order within each basis. */
+/** Only a provider charge is eligible; explicitly identified estimates are not charges. */
 export function preferredReportedCost(...candidates: Array<ReportedCost | undefined>): ReportedCost | undefined {
-  return candidates.find((cost) => cost?.basis === 'provider-response')
-    ?? candidates.find((cost) => cost?.basis === 'gateway-estimate');
+  return candidates.find((cost) => cost?.basis === 'provider-response');
 }
 
 export function parseReportedCost(

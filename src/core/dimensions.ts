@@ -3,7 +3,7 @@ import type { ImageDimensions } from '../types/image.js';
 /**
  * Read pixel dimensions from PNG/WebP/JPEG headers without any Node buffer or
  * image library. Absent/garbled headers return undefined instead of guessing:
- * dimensions only inform honest cost estimates and display metadata.
+ * dimensions inform display metadata, never billing-token or price estimates.
  */
 export function readImageDimensions(bytes: Uint8Array, mimeType: string): ImageDimensions | undefined {
   const dimensions = readHeaderDimensions(bytes, mimeType);

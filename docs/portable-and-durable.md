@@ -124,14 +124,44 @@ already durable through Stop/archive/sibling failure. Quota release/finalization
 
 Metadata keeps bounded meaningful nested usage and ONE cost answer per request, not per image.
 Each returned cost candidate is validated before fallback. Provider cost wins with supported
-source/unit provenance; identifiers are bounded, not arbitrary URLs/userinfo. Structured
-`basis` supports `provider-response` or `gateway-estimate` only; unknown basis is rejected.
-An explicit estimate cannot be promoted to a provider charge. Safe accounting survives
+source/unit provenance; identifiers are bounded, not arbitrary URLs/userinfo. Explicit provider
+or gateway estimates are not used as provider charges or fallback prices. Safe accounting survives
 unusable-image errors without retaining the response body. Legacy desktop numeric cost/usage
-stay numeric, and a known estimate is never inserted into the old scalar cost field. GPT Image 2.5 fallback
-uses dated documented rates/formula only for matching models and known controls/counters.
-Auto quality, unknown input/cache splits or conflicting cached-image rates remain Unknown
-or Partial, never a fabricated total/zero. Pixel dimensions alone do not resolve input cost.
+stay numeric; additive `reportedUsage`, `tokenUsage` and `costDetails` preserve rich accounting,
+and an estimate is never inserted into the old scalar cost field.
+
+Core normalizes known API counters into disjoint `tokenUsage` buckets (`input`, `output`,
+`cacheRead`, `cacheWrite`). Cached input is not billed twice. Raw nested counters are preserved
+separately in `reportedUsage`. Unknown counter semantics or missing input/output totals leave
+normalized usage unavailable. Optional `ImageHost.calculateCost` must bind the official
+`pi-ai.calculateCost` to the exact admitted route's compatible Pi image-model catalog pricing:
+
+```ts
+calculateCost(tokens) {
+  const usage = {
+    ...tokens,
+    totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  return calculatePiCost(compatiblePiModel, usage).total;
+}
+```
+
+Here `calculatePiCost` is imported as `calculateCost` from `@earendil-works/pi-ai`, and
+`compatiblePiModel` is host-resolved pricing for the exact route, not user-supplied rates or a
+similarly named chat model. The host must verify its rates represent the complete request;
+GPT Image's separate modality rates do not fit Pi's four-rate calculator. Desktop binds this
+capability from modern Pi image-model registry lookups only when a trusted registry adapter
+adds `costCompatibility: 'complete-four-bucket-token-pricing'` to the exact matching image
+entry. That attestation means its Pi catalog rates cover the full request, including image
+output, input modalities and caching; it must not be inferred from numeric validity, zero
+rates or the mere presence of an image catalog entry. Stock Pi entries lack this assurance
+and therefore do not enable desktop fallback by themselves. Durable forwards the admitted
+host's callback under the same complete-pricing responsibility. Without compatible pricing or sufficient usage, cost is `unknown`, never a fabricated
+zero. Calculator failures do not lose committed outputs. Computed prices are labeled
+`estimated`, `completeness: 'complete'`, with source `pi-ai.calculateCost`. No local price table,
+image dimension/quality formula, or gateway-estimate fallback is used. The callback must not
+make network requests or perform generation; it calculates against already-resolved pricing.
 Do not relabel Partial as total, multiply request cost by image count or inject estimates
 as native text-model token usage.
 

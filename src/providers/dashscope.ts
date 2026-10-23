@@ -16,6 +16,7 @@ import type {
   ResolvedProvider,
 } from '../types.js';
 import { withDefaultPath } from '../url.js';
+import { coreMetadata, parseReportedCost, preferredReportedCost } from '../core/usage.js';
 import { credentialRedirectMode, hasProviderAuthentication, jsonHeaders } from './openai.js';
 
 /**
@@ -141,8 +142,15 @@ export const dashscopeAdapter: ImageProviderAdapter = {
       }
     }
     const requestId = typeof json.request_id === 'string' ? json.request_id : res.headers.get('x-request-id') ?? undefined;
-    const usage = numericRecord(json.usage);
-    if (out[0] && (requestId || usage)) out[0].metadata = { ...(requestId ? { requestId } : {}), ...(usage ? { usage } : {}) };
+    const usage = isRecord(json.usage) ? json.usage : undefined;
+    const reportedCost = preferredReportedCost(
+      parseReportedCost(json.cost, json.currency, 'provider-response'),
+      parseReportedCost(usage?.cost, usage?.currency, 'provider-response', json.currency),
+    );
+    if (out[0]) out[0].metadata = coreMetadata({
+      ...(requestId ? { requestId } : {}), reportedUsage: usage,
+      ...(reportedCost ? { reportedCost } : {}),
+    });
     if (out.length === 0) {
       // Drop the raw body ("Raw: …") — it may echo the prompt or provider internals.
       const detail = `${provider.name} returned no images. The model may have refused the prompt or the response shape changed.`;
@@ -157,12 +165,6 @@ function invalidResponseError(provider: ResolvedProvider): ImageGenError {
     `${provider.name} returned an invalid image response.`,
     `${providerLogLabel(provider)} returned an invalid image response`,
   );
-}
-
-function numericRecord(value: unknown): Record<string, number> | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]));
-  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

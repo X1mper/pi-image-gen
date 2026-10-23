@@ -32,7 +32,7 @@ Built-in API-key routes read `providers.<id>.apiKey` in local `settings.json` fi
 
 For subscription-backed generation, first run `/login` in Pi and select **ChatGPT Plus/Pro (Codex)**, then run `/image-gen use codex-subscription gpt-image-2`. No `OPENAI_API_KEY` is required. Codex requests use the ChatGPT-backed image endpoints and count against provider-managed subscription usage and limits. GPT Image 2.5 is intentionally **not** listed on this route: its API model ids have not been verified against the private Codex subscription endpoint.
 
-The active provider route and model are **fixed in settings.json**. The `image_generate` tool intentionally does **not** take a `model` parameter — point your project at one route/model pair for consistent output. Use `/image-gen use <provider> <model>` to switch both safely; the command persists trusted project settings and refreshes the tool schema immediately.
+The primary route is configured in `settings.json` as `default: { provider, model }`. Optional `fallback` and `compare` arrays contain the same provider/model pairs. `image_generate` uses the default with selective fallback; `image_compare` runs only for explicit model comparisons. Neither tool accepts arbitrary model/provider arguments. Use `/image-gen use <provider> <model>` to update the default safely without changing either list.
 
 ## Install
 
@@ -45,7 +45,7 @@ pi install npm:@abhishek944/pi-image-gen
 Or directly from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-image-gen@v0.5.0
+pi install git:github.com/abhishek944/pi-image-gen@v0.7.0
 ```
 
 The package's `pi.extensions` field auto-registers the compiled `dist/extension.js` entry with the host pi-coding-agent runtime; no extra wiring needed.
@@ -57,6 +57,7 @@ The npm package ships compiled ESM JavaScript and TypeScript declarations, so a 
 ```js
 import {
   generateImage,
+  compareImages,
   runSpritePipeline,
 } from '@abhishek944/pi-image-gen';
 ```
@@ -72,12 +73,12 @@ import piImageGenExtension from '@abhishek944/pi-image-gen/extension';
 Settings are read by `pi-shared`'s `loadPiSettings`, which merges three files (low-to-high priority):
 
 1. `~/.pi/agent/settings.json` (global)
-2. `$PI_AGENT_HOME/settings.json` (agent dir, if `PI_AGENT_HOME` is set)
+2. The agent config directory's `settings.json` (`PI_CODING_AGENT_DIR`, then `PI_AGENT_HOME`, otherwise the global directory; duplicate paths are loaded once)
 3. `<cwd>/.pi/settings.json` (trusted project)
 
 Project settings are ignored when project trust is declined. `${ENV_VAR}` interpolation is supported in global and agent settings only, so keep environment-backed credentials out of project settings.
 
-All settings live under the `pi-image-gen` key. New configurations should set an authentication-specific `defaultProvider` together with `defaultModel` (the command below writes this for you):
+All settings live under the `pi-image-gen` key. New configurations should use `default` with an authentication-specific `provider` and `model` (the command below writes this for you):
 
 ```text
 /image-gen use gemini-api nano-banana
@@ -86,13 +87,13 @@ All settings live under the `pi-image-gen` key. New configurations should set an
 ```json
 {
   "pi-image-gen": {
-    "defaultProvider": "gemini-api",
-    "defaultModel": "nano-banana"
+    "version": 2,
+    "default": { "provider": "gemini-api", "model": "nano-banana" }
   }
 }
 ```
 
-Model-only configurations remain supported and keep the earlier automatic routing behavior.
+The namespace schema version is **2**, independent of the npm package version. Unversioned and `version: 1` legacy configurations remain readable; unsupported versions are rejected rather than silently downgraded. Within one file, `default` wins over sibling legacy keys. Defaults are normalized per file before applying global < agent < trusted-project priority, so a higher legacy override still works when a lower file has already migrated. Complete defaults written by setup/use/set now contain `version: 2` and `default`, without obsolete legacy default keys. No startup operation rewrites files automatically.
 
 …and exports the matching env var:
 
@@ -107,8 +108,15 @@ That's it. From the agent: `image_generate({ prompt: "a cyberpunk cat" })`.
 ```json
 {
   "pi-image-gen": {
-    "defaultProvider": "gemini-api",
-    "defaultModel": "nano-banana",
+    "version": 2,
+    "default": { "provider": "gemini-api", "model": "nano-banana" },
+    "fallback": [
+      { "provider": "openai-api", "model": "gpt-image-2" }
+    ],
+    "compare": [
+      { "provider": "gemini-api", "model": "nano-banana" },
+      { "provider": "openai-api", "model": "gpt-image-2" }
+    ],
     "outputDir": ".pi/images",
     "requestTimeoutMs": 120000,
     "openRouterDiscovery": true,
@@ -150,8 +158,12 @@ That's it. From the agent: `image_generate({ prompt: "a cyberpunk cat" })`.
 
 | Field             | Purpose                                                                                  |
 | ----------------- | ---------------------------------------------------------------------------------------- |
-| `defaultProvider` | Authentication-specific route (`openai-api`, `codex-subscription`, `gemini-api`, `dashscope-api`, `openrouter-api`, `ark-api`, `meta-api`, `meta-subscription`, `mai-api`, `azure-openai-api`, or a custom-provider id). Recommended for new configs. |
-| `defaultModel`    | Model id or alias the tool will use. **Required.**                                       |
+| `version` | Namespace schema version. Current: `2`; missing/`1` are legacy-compatible. Unsupported versions are refused. |
+| `default` | Preferred `{ provider, model }` pair. Provider is an authentication-specific route such as `openai-api`, `codex-subscription`, `gemini-api`, `meta-api`, `meta-subscription`, or a custom-provider id. |
+| `fallback` | Ordered provider/model pairs for safely classified default-generation failures. Omitted/empty disables fallback. |
+| `compare` | Provider/model pairs used only by explicit comparison requests. The default is not implicitly included. |
+| `defaultProvider` | Legacy authentication-specific default route; used when `default` is absent. |
+| `defaultModel` | Legacy model id or alias; ordinary generation needs this or a valid `default`. |
 | `outputDir`       | Where to write generated images. Relative paths resolve against the session cwd. Default `.pi/images`. |
 | `requestTimeoutMs` | End-to-end deadline including inputs and downloads. `1000`–`900000`; default `120000`. |
 | `openRouterDiscovery` | Best-effort discovery of the selected OpenRouter model's supported parameters. Default `true`; failure falls back safely. |
@@ -160,6 +172,30 @@ That's it. From the agent: `image_generate({ prompt: "a cyberpunk cat" })`.
 | `spriteGeneration` | Optional sprite-sheet processing settings. Disabled by default; see below. Invalid values fail closed to safe defaults. |
 
 In global and agent settings, `apiKey`, `baseUrl`, and `headers` values support `$VAR` and `${VAR}` environment interpolation. Fallbacks require the braced form (for example, `${FOO:-default}`); `$FOO:-default` is not supported. Project settings keep all of these placeholders literal.
+
+## Migrate existing settings to version 2
+
+Load this extension version, then preview migration before applying it:
+
+```text
+/image-gen migrate --dry-run
+/image-gen migrate
+```
+
+The default scope is `all`: global, agent and the trusted current project. Identical paths are handled once. To select one scope:
+
+```text
+/image-gen migrate --dry-run --scope project
+/image-gen migrate --scope project
+```
+
+Other scopes are `global` and `agent`. Dry-run creates no backups, files or directories. Migration reports paths/statuses and field changes, never API keys or full settings contents.
+
+Each existing JSON file is migrated **individually from its raw contents**, never from merged settings. Complete `defaultProvider`/`defaultModel` pairs become `default`; the old keys are removed and `version: 2` is written. Existing nested defaults retain precedence. Credentials, custom providers, sprites, fallback/compare lists, unrelated namespaces and literal environment placeholders are preserved. Missing fallback/compare arrays are not filled with empty arrays, because that could disable inherited lists.
+
+A model-only default is inferred only when the same-file routing is unambiguous and isolated from other layers' defaults/custom providers. Ambiguous Meta auto-auth, layered defaults, environment-dependent model names, multiple candidate providers and provider-only partial defaults are left unchanged with guidance to add an explicit same-file pair. A skipped file does not stop other independently safe files from migrating; mixed legacy/v2 loading remains supported. Untrusted projects, invalid JSON, symlinks, non-regular files and unsupported versions are not rewritten.
+
+Before replacing a changed file, migration creates a unique adjacent **private backup** named `settings.json.pi-image-gen-backup-<id>.bak` containing its original bytes. It then writes a same-directory temporary file and atomically renames it, preserving the original permissions. An intervening source edit stops replacement. Backups may contain credentials: keep them private, do not commit them, and inspect them before manually restoring. Backups are retained; no automatic rollback is performed. Each file is atomic, not the whole multi-file command. Already-current files are no-ops, and successful writes reload the extension settings.
 
 ## DeepSeek Harness
 
@@ -598,7 +634,11 @@ image_generate({
 })
 ```
 
-Returns the absolute file path(s) of saved images. Files land in `outputDir` (default `<cwd>/.pi/images`), filename pattern `<filename or model-UTC-stamp>.<ext>`. Result details also include elapsed time and, when supplied by the provider, a sanitized request id, numeric usage/cost metadata, and decoded output dimensions.
+Returns the absolute file path(s) of saved images. Files land in `outputDir` (default `<cwd>/.pi/images`), filename pattern `<filename or model-UTC-stamp>.<ext>`. Result details also include elapsed time, a sanitized provider request id when available, and decoded output dimensions. Accounting preserves nested provider counters in `metadata.reportedUsage` (including cached-token details), plus normalized disjoint `metadata.tokenUsage` buckets when the API's semantics are known: `input` excludes `cacheRead` and `cacheWrite`, and `output` includes billable output tokens. Missing counters are not invented from image dimensions.
+
+`metadata.costDetails` uses a valid provider-reported cost first (including zero). Otherwise it uses `pi-ai.calculateCost` only when a trusted registry adapter supplies an exact, endpoint-matched image model, explicitly attests `costCompatibility: 'complete-four-bucket-token-pricing'`, and sufficient token usage is available; otherwise cost is `unknown`. Stock Pi catalog entries do not provide this attestation: their numeric rates alone may omit image fees or use default zeros, so they are not automatically treated as complete image prices. Calculated costs are labeled estimates, not provider charges. There are no local price tables, pixel/quality token estimates, or gateway-estimate fallbacks. GPT Image's separate text/image input rates cannot be represented by Pi's four-rate calculator and therefore do not use this fallback. Older Pi registries without image-model lookup still support generation and provider-reported costs, but cannot supply calculated costs.
+
+Legacy `metadata.usage` retains top-level numeric counters, and legacy numeric `metadata.cost` remains provider-reported only. Use `reportedUsage`, `tokenUsage` and `costDetails` for full accounting. Image and sprite tool summaries display these fields; costs are per provider request, never multiplied by the number of images.
 
 **The schema is model-aware.** Every built-in model carries a capability contract sourced from official API docs or clearly labeled extension safety limits, and the tool is registered with parameters shaped by that contract (on session start, and again after `/image-gen reload`) — so the agent sees exactly the knobs the active model honors, with documented values in enums and descriptions where available. Provider-specific numeric contracts (size ranges, `n` ceilings, and reference-image counts) are generally **advice, not a gate** because a self-hosted deployment or gateway may legitimately differ. Independently, the extension enforces universal safety ceilings of 16 references, 20MB per input, and 128MB combined, plus rejects parameter combinations an adapter would otherwise silently drop. Providers may enforce stricter limits.
 
@@ -634,7 +674,9 @@ Because the schema is fixed at registration, switching models via `/image-gen re
 
 ### Tool result format
 
-The tool's text result is shaped as ready-to-paste markdown the model can copy verbatim into its reply, so the UI renders the image inline:
+`image_generate` includes native image attachments so image-capable Pi clients can show previews directly beneath the tool call, without waiting for the agent's reply. The first four outputs are eligible for previews, each fitted within 1024×1024 pixels and 384 KiB of base64 (at most 1.5 MiB across four previews). These are display copies only: saved originals, file paths, and result metadata stay unchanged. Vision-capable models can also inspect the attachments, so previews may add image input usage to subsequent model requests. Missing, unreadable, or unresizable previews are skipped without failing generation. Clients without inline image rendering can still use the saved paths and Markdown links. The `/image-gen generate` command continues to report paths through a text notification.
+
+The tool's text result is still shaped as ready-to-paste markdown the model can copy verbatim into its reply, so the UI renders the image inline:
 
 ```
 Generated 1 image(s) via amaster (custom) (qwen-image-2.0). Show each one to the user as inline markdown — copy the lines below verbatim into your reply:
@@ -682,21 +724,34 @@ Provider behavior:
 | Meta Muse Image (`muse-image-1.0`) | `POST /v1/responses` with `input_image` content parts. Supports multi-image composition. |
 | OpenRouter | `POST /api/v1/images` with `input_references` JSON. Supports multi-image. |
 
-There is intentionally no `model` parameter on the tool — the active route/model pair is fixed by `pi-image-gen.defaultProvider` and `pi-image-gen.defaultModel` in settings.
+There is intentionally no `model` parameter on the tool. The primary route comes from `default` (or legacy `defaultProvider`/`defaultModel`); configured fallbacks are the only automatic alternatives.
+
+## Default, fallback and explicit comparison
+
+Ordinary `image_generate` and library `generateImage()` use the default, followed by `fallback` entries in order only after a missing/unusable credential (including a missing or expired Pi image login before generation) or an explicit generation HTTP **401, 404 or 429**. Each selected route is attempted once; the same failed route is not automatically retried. The successful result reports the actual provider/model and, when fallback was exercised, the attempted routes. Duplicate resolved route/model pairs are rejected before generation. A legacy model-only Meta default must be made explicit (`meta-api` or `meta-subscription`) before adding the same Meta model under another authentication route.
+
+No automatic fallback occurs after **403/policy refusal, 400/422, 5xx, timeout, network/disconnection, cancellation, malformed output, image-download failure or storage failure**. Such outcomes either need correction or may already have consumed quota. Fallback can cross billing providers only because those pairs were explicitly configured. Every candidate uses its own capabilities; incompatible explicit controls stop the chain rather than being silently dropped. For example, a mask or pixel size supported by the default may not work on a Gemini fallback. Use shared controls or omit provider-specific controls when cross-provider fallback is important. Sprite generation keeps its one-request contract and does not use fallback.
+
+Use **`image_compare`** only when the user explicitly asks to compare models, or run `/image-gen compare <prompt>`. It uses exactly the entries in `compare`, without fallback/substitution and without changing the default. Each entry is a separate potentially billable generation. One failure does not delete other successful images, and cancellation prevents subsequent entries from starting. Comparison results are labeled by the selected provider/model and retain per-entry duration, usage, cost, original paths and bounded native previews. Missing cost remains unknown; there is no invented combined charge.
+
+The comparison tool accepts `prompt`, optional `image` references, `filename` and `outputDir`. To avoid pretending different providers share size/quality semantics, it uses each model's native defaults rather than exposing default-model-specific controls. Mixed-provider comparisons may therefore return different dimensions. The library exports `compareImages(params, options)` with the same small control set. The portable core and native Durable integration retain their existing single-route, host-admitted execution contracts; they do not acquire hidden fallback or comparison.
 
 ## Slash commands
 
-- `/image-gen doctor` — validate the provider/model pair, authentication presence, timeout, custom-provider shapes, and output-directory writability without making a paid generation request or printing credentials.
+- `/image-gen migrate [--dry-run] [--scope all|global|agent|project]` — migrate raw settings files to schema version 2 with private backups and atomic replacement. Default scope is `all`; no automatic migration occurs at startup.
+- `/image-gen doctor` — validate the config version, provider/model pair, authentication presence, timeout, custom-provider shapes, and output-directory writability without making a paid generation request or printing credentials.
 - `/image-gen setup` — interactively choose a configured route and compatible model. Non-interactive hosts receive equivalent `/image-gen use` guidance.
 - Command arguments provide completions for subcommands, routes, and known model ids.
-- `/image-gen list` — show output directory, sprite status/defaults, default provider, default model, routes currently configured through API keys/Pi logins/custom settings, and every available provider/model route. OpenAI API vs Codex subscription and Meta API vs Meta subscription are separate entries. Listing login status never refreshes or retrieves an OAuth token.
-- `/image-gen set provider <provider>` — persist only the default provider route. If the existing model is incompatible, the command warns so you can set the model next.
+- `/image-gen list` — show output directory, sprite status/defaults, default provider, default model, fallback/compare lists, routes currently configured through API keys/Pi logins/custom settings, and every available provider/model route. OpenAI API vs Codex subscription and Meta API vs Meta subscription are separate entries. Listing login status never refreshes or retrieves an OAuth token.
+- `/image-gen set provider <provider>` — update the default provider, preserving its current model and synchronizing the new/legacy settings shapes. If the existing model is incompatible, the command warns so you can set the model next.
 - `/image-gen set model <model>` — persist the model after validating it against the selected provider.
 - `/image-gen use <provider> <model>` — validate and persist both atomically. This is the recommended switch command.
 - `/image-gen reload` — re-read settings from disk and re-register the tool so its schema (e.g. whether `quality` is exposed) tracks the newly selected model.
 - `/image-gen generate <prompt>` — generate an image directly from the command line using the active model. Reports the saved file path(s) as a plain-text notification (the command uses `ctx.ui.notify`, which shows a status line, not rendered Markdown — so unlike the tool result it does not emit an inline `![](…)` image). Use the `image_generate` tool from the agent when you want the image rendered inline.
 
-Generation emits safe phase updates while loading inputs, waiting for the provider, and saving output. Escape cancellation and `requestTimeoutMs` propagate through provider requests and downloads. Paid generation POSTs are never retried automatically.
+- `/image-gen compare <prompt>` — explicitly generate with every configured comparison pair and report labeled per-route results. Use `image_compare` from the agent for native previews.
+
+Generation emits safe phase updates while loading inputs, waiting for the provider, and saving output. Escape cancellation and `requestTimeoutMs` propagate through provider requests and downloads. Each route keeps its own request deadline. Paid POSTs are never blindly retried; only the explicitly configured fallback policy above can authorize another route after a classified rejection.
 
 The three settings commands update `<cwd>/.pi/settings.json` only for a trusted project. They merge the `pi-image-gen` object without replacing unrelated settings and immediately re-register the tool; manual edits still require `/image-gen reload`.
 

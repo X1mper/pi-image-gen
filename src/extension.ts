@@ -14,6 +14,9 @@ import {
 } from './capabilities.js';
 import {
   canonicalProviderRouteId,
+  configuredImageRoutes,
+  IMAGE_CONFIG_VERSION,
+  normalizeImageGenSettings,
   isReservedProviderRouteId,
   listProviderRoutes,
   loadImageGenSettings,
@@ -21,10 +24,14 @@ import {
 } from './config.js';
 import { errorMessageForUser, toLogSummary } from './errors.js';
 import { generateImage } from './generate.js';
+import { compareImages } from './compare.js';
+import { formatAccounting } from './format-accounting.js';
 import { MAX_GENERATED_IMAGES, MAX_REFERENCE_IMAGE_INPUTS } from './image-input.js';
+import { buildImagePreviews } from './image-preview.js';
 import { discoverOpenRouterCapabilities } from './openrouter-discovery.js';
 import { canUseMetaOAuth } from './providers/meta.js';
 import { SettingsWriteError, updateProjectImageGenSettings } from './settings-write.js';
+import { migrateImageGenSettings, type MigrationScope } from './settings-migrate.js';
 import { formatSpriteToolResult, spriteProgressMessage } from './sprite/format.js';
 import { runSpritePipeline } from './sprite/pipeline.js';
 import { buildSpriteGuidelines, buildSpriteToolParameters } from './sprite/schema.js';
@@ -32,6 +39,8 @@ import { normalizeSpriteSettings } from './sprite/settings.js';
 import type { SpriteGenerateParams } from './sprite/types.js';
 import type {
   ApiStyle,
+  CompareImageParams,
+  ImageCompareResult,
   GenerateImageParams,
   ImageGenResult,
   ImageGenSettings,
@@ -116,7 +125,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
       name: 'image_generate',
       label: 'ImageGen',
       description:
-        'Generate or edit images. The image provider route and model are fixed by pi-image-gen.defaultProvider/defaultModel in settings (this tool does not accept provider or model parameters). Pass `image` to do image-to-image / edit / style transfer / character preservation: a regular image file inside the session cwd (absolute or relative) or a public http(s) URL. To iterate on a previous result, pass its file path back when it is inside cwd. Do NOT pass base64 or data: URIs — write bytes to a file under cwd first. Saves the output to disk and returns the absolute path(s). When reporting the result to the user, render each generated image as inline markdown — copy the `![alt](…)` line(s) from the tool result verbatim so the UI can display it; do not just paste the bare path. Run /image-gen list to see the active model.',
+        'Generate or edit images. The primary route is configured in pi-image-gen.default (legacy defaultProvider/defaultModel also work), with optional ordered fallback routes for safely classified failures. This tool does not accept provider or model parameters; use image_compare only for explicit comparisons. Pass `image` to do image-to-image / edit / style transfer / character preservation: a regular image file inside the session cwd (absolute or relative) or a public http(s) URL. To iterate on a previous result, pass its file path back when it is inside cwd. Do NOT pass base64 or data: URIs — write bytes to a file under cwd first. Saves the output to disk and returns the absolute path(s) with bounded inline image previews when available. Use saved originals, not preview copies, for edits or exact pixel inspection. When reporting the result to the user, render each generated image as inline markdown — copy the `![alt](…)` line(s) from the tool result verbatim so the UI can display it; do not just paste the bare path. Run /image-gen list to see the active model.',
       promptSnippet:
         'Generate or edit raster images, including icons, logos, and diagrams when requested. Prefer repo-native SVG/CSS/canvas when editability or exact integration with existing assets matters.',
       promptGuidelines: buildImageGuidelines(caps),
@@ -135,8 +144,9 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
               details: { phase },
             }),
           );
+          const previews = await buildImagePreviews(result.images, signal);
           return {
-            content: [{ type: 'text' as const, text: formatToolResultText(result) }],
+            content: [{ type: 'text' as const, text: formatToolResultText(result) }, ...previews],
             details: result,
           };
         } catch (error) {
@@ -146,6 +156,50 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
           // terse category. Neither echoes a raw fs/fetch error or response body.
           console.error(`[pi-image-gen] image_generate failed: ${toLogSummary(error)}`);
           throw new Error(`image_generate failed: ${errorMessageForUser(error)}`);
+        }
+      },
+    });
+  };
+
+  const runCompare = (
+    params: CompareImageParams,
+    cwd: string,
+    signal?: AbortSignal,
+    modelRegistry?: ImageModelRegistry,
+    onProgress?: (phase: 'loading-inputs' | 'waiting-provider' | 'saving-output') => void,
+  ): Promise<ImageCompareResult> => compareImages(params, {
+    cwd, settings,
+    ...(signal ? { signal } : {}),
+    ...(modelRegistry ? { modelRegistry } : {}),
+    ...(onProgress ? { onProgress } : {}),
+  });
+
+  const registerCompareTool = (): void => {
+    pi.registerTool({
+      name: 'image_compare',
+      label: 'ImageCompare',
+      description: 'Compare images only when the user explicitly requests a model comparison. Generates independently with every provider/model pair in pi-image-gen.compare, using each model\'s native defaults and the same prompt/references. Each entry may consume quota or API charges. Never changes the default, uses fallback, or accepts arbitrary models/providers. Returns labeled successes/failures, saved originals, Markdown links and bounded previews. Copy image Markdown lines verbatim when presenting results.',
+      promptSnippet: 'Explicitly compare the configured image models; each route is a separate generation request.',
+      promptGuidelines: ['Use image_generate for ordinary generation. Use image_compare only for an explicit request to compare models; do not invoke it for a routine image request. Do not automatically rerun failed comparison entries.'],
+      parameters: Type.Object({
+        prompt: Type.String({ description: 'The same generation or edit prompt for every comparison target.' }),
+        image: Type.Optional(Type.Array(Type.String(), { maxItems: MAX_REFERENCE_IMAGE_INPUTS, description: IMAGE_PARAM_BASE })),
+        filename: Type.Optional(Type.String({ description: 'Output filename prefix; each comparison entry gets a numbered suffix.' })),
+        outputDir: Type.Optional(Type.String({ description: 'Output directory for all comparison originals.' })),
+      }),
+      async execute(_toolCallId, params, signal, onUpdate, ctx) {
+        try {
+          const report = await runCompare(params, ctx.cwd ?? sessionCwd, signal,
+            ctx.modelRegistry as unknown as ImageModelRegistry,
+            (phase) => onUpdate?.({ content: [{ type: 'text', text: progressMessage(phase) }], details: { phase } }));
+          const images = report.entries.flatMap((entry) => entry.status === 'success' ? entry.result.images : []);
+          return {
+            content: [{ type: 'text' as const, text: formatComparisonText(report) }, ...await buildImagePreviews(images, signal)],
+            details: report,
+            ...(images.length ? {} : { isError: true }),
+          };
+        } catch (error) {
+          throw new Error(`image_compare failed: ${errorMessageForUser(error)}`);
         }
       },
     });
@@ -214,6 +268,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
     settings = nextSettings;
     discoveredCapabilities = nextDiscovered;
     registerImageTool();
+    registerCompareTool();
     registerSpriteTool();
     syncSpriteToolActivation();
     return true;
@@ -226,11 +281,36 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
 
   pi.registerCommand('image-gen', {
     description:
-      'pi-image-gen: /image-gen [list|doctor|setup|reload|set provider <id>|set model <id>|use <provider> <model>|generate <prompt>]',
+      'pi-image-gen: /image-gen [list|doctor|setup|reload|migrate [--dry-run] [--scope all|global|agent|project]|set provider <id>|set model <id>|use <provider> <model>|generate <prompt>|compare <prompt>]',
     getArgumentCompletions: (prefix: string) => imageGenCompletions(prefix, settings),
     handler: async (args: string | undefined, ctx: ExtensionContext) => {
       const raw = (args ?? '').trim();
       const tokens = raw.split(/\s+/).filter(Boolean);
+      if (tokens[0] === 'migrate') {
+        let dryRun = false;
+        let scope: MigrationScope = 'all';
+        let scopeSeen = false;
+        for (let index = 1; index < tokens.length; index++) {
+          if (tokens[index] === '--dry-run' && !dryRun) dryRun = true;
+          else if (tokens[index] === '--scope' && !scopeSeen && ['all', 'global', 'agent', 'project'].includes(tokens[index + 1] ?? '')) {
+            scope = tokens[++index] as MigrationScope;
+            scopeSeen = true;
+          } else {
+            ctx.ui.notify('Usage: /image-gen migrate [--dry-run] [--scope all|global|agent|project]. No files changed.', 'error');
+            return;
+          }
+        }
+        const reports = await migrateImageGenSettings({ cwd: ctx.cwd, projectTrusted: isProjectTrusted(ctx), scope, dryRun });
+        ctx.ui.notify([
+          dryRun ? 'Migration dry run — no files changed or backups created.' : 'Image config migration to version 2:',
+          ...reports.map((report) => `${report.scope}: ${report.status} — ${report.path}\n${report.message}${report.backupPath ? `\nBackup: ${report.backupPath}` : ''}`),
+        ].join('\n'), reports.some((report) => report.status === 'blocked' || report.status === 'error') ? 'warning' : 'info');
+        if (!dryRun && reports.some((report) => report.status === 'migrated')) {
+          try { await publishSettings(loadImageGenSettings(ctx.cwd, isProjectTrusted(ctx))); }
+          catch (error) { ctx.ui.notify(`Migration results above are saved, but settings could not reload: ${errorMessageForUser(error)}`, 'warning'); }
+        }
+        return;
+      }
       if (tokens[0] === 'doctor') {
         const report = await diagnoseImageGen(
           settings,
@@ -246,10 +326,10 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`pi-image-gen settings reloaded. Sprite generation is ${sprite.enabled ? 'enabled' : 'disabled'}.`, 'info');
         return;
       }
-      if (tokens[0] === 'generate') {
+      if (tokens[0] === 'generate' || tokens[0] === 'compare') {
         const prompt = raw.slice(tokens[0].length).trim();
         if (!prompt) {
-          ctx.ui.notify('Usage: /image-gen generate <prompt>', 'error');
+          ctx.ui.notify(`Usage: /image-gen ${tokens[0]} <prompt>`, 'error');
           return;
         }
         const cwd = ctx.cwd ?? sessionCwd;
@@ -260,7 +340,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
         const cancellationDialog =
           ctx.mode === 'tui'
             ? ctx.ui
-                .select('Generating image… Esc cancels', ['Cancel generation'], {
+                .select(tokens[0] === 'compare' ? 'Comparing images… Esc cancels' : 'Generating image… Esc cancels', ['Cancel generation'], {
                   signal: dialogController.signal,
                 })
                 .then(() => {
@@ -268,14 +348,14 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
                 })
             : undefined;
         try {
-          const result = await runGenerate(
+          const result = await (tokens[0] === 'compare' ? runCompare : runGenerate)(
             { prompt },
             cwd,
             commandController.signal,
             ctx.modelRegistry as unknown as ImageModelRegistry,
             (phase) => ctx.ui.setStatus('pi-image-gen', progressMessage(phase)),
           );
-          ctx.ui.notify(formatCommandSummary(result), 'info');
+          ctx.ui.notify('entries' in result ? formatComparisonText(result) : formatCommandSummary(result), 'info');
         } catch (error) {
           console.error(`[pi-image-gen] /image-gen generate failed: ${toLogSummary(error)}`);
           ctx.ui.notify(`image generation failed: ${errorMessageForUser(error)}`, 'error');
@@ -292,7 +372,11 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
         update: Pick<ImageGenSettings, 'defaultProvider' | 'defaultModel'>,
       ): Promise<boolean> => {
         try {
-          await updateProjectImageGenSettings(ctx.cwd, isProjectTrusted(ctx), update);
+          const current = loadImageGenSettings(ctx.cwd, isProjectTrusted(ctx));
+          const model = update.defaultModel ?? current.defaultModel;
+          const provider = update.defaultProvider ?? current.defaultProvider;
+          await updateProjectImageGenSettings(ctx.cwd, isProjectTrusted(ctx),
+            model && provider ? { default: { model, provider } } : update);
           await publishSettings(loadImageGenSettings(ctx.cwd, isProjectTrusted(ctx)));
           return true;
         } catch (error) {
@@ -413,7 +497,7 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
 
       if (tokens.length > 0 && tokens[0] !== 'list') {
         ctx.ui.notify(
-          'Usage: /image-gen [list|doctor|setup|reload|set provider <id>|set model <id>|use <provider> <model>|generate <prompt>]',
+          'Usage: /image-gen [list|doctor|setup|reload|migrate [--dry-run] [--scope all|global|agent|project]|set provider <id>|set model <id>|use <provider> <model>|generate <prompt>|compare <prompt>]',
           'error',
         );
         return;
@@ -438,8 +522,11 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
         `Output directory: ${typeof settings.outputDir === 'string' && settings.outputDir.trim() ? settings.outputDir : '.pi/images'}`,
         `Sprite generation: ${sprite.enabled ? `enabled (${sprite.defaultRows}x${sprite.defaultColumns}, ${sprite.defaultFormat.toUpperCase()}, ${sprite.frameDurationMs} ms, ${sprite.strictValidation ? 'strict QC' : 'advisory QC'})` : 'disabled'}`,
         ...(sprite.enabled ? [`Sprite output directory: ${sprite.outputDir}`] : []),
+        `Config schema: ${settings.version ?? 'legacy/unversioned'} (current: ${IMAGE_CONFIG_VERSION})`,
         `Default provider: ${defaultProvider}`,
         `Default model: ${defaultModel ?? '(not set)'}`,
+        configuredRouteSummary(settings, 'fallback'),
+        configuredRouteSummary(settings, 'compare'),
         ...(defaultProblem ? [`  ! ${defaultProblem}`] : []),
         '',
         'Configured providers:',
@@ -468,7 +555,8 @@ export default function piImageGenExtension(pi: ExtensionAPI): void {
 }
 
 export function imageGenCompletions(prefix: string, settings: ImageGenSettings): Array<{ value: string; label: string }> | null {
-  const commands = ['list', 'doctor', 'setup', 'reload', 'generate', 'set provider', 'set model', 'use'];
+  try { settings = normalizeImageGenSettings(settings); } catch { return null; }
+  const commands = ['list', 'doctor', 'setup', 'reload', 'generate', 'compare', 'migrate', 'migrate --dry-run', 'migrate --scope all', 'migrate --scope global', 'migrate --scope agent', 'migrate --scope project', 'set provider', 'set model', 'use'];
   const raw = prefix.trimStart();
   const routes = listProviderRoutes(settings);
   const candidates = [...commands];
@@ -494,6 +582,13 @@ export async function diagnoseImageGen(
   registry?: ImageModelRegistry,
 ): Promise<string[]> {
   const lines = ['pi-image-gen doctor'];
+  try { settings = normalizeImageGenSettings(settings); }
+  catch (error) { return [...lines, `ERROR: ${errorMessageForUser(error)}`]; }
+  lines.push(`OK: config schema ${settings.version ?? 'legacy/unversioned'} is supported (current: ${IMAGE_CONFIG_VERSION}).`);
+  for (const kind of ['fallback', 'compare'] as const) {
+    try { lines.push(`OK: ${configuredImageRoutes(settings, kind).length} configured ${kind} route(s) are valid.`); }
+    catch (error) { lines.push(`ERROR: ${errorMessageForUser(error)}`); }
+  }
   const model = trimmedSetting(settings.defaultModel);
   const provider = trimmedSetting(settings.defaultProvider);
   if (!model) lines.push('ERROR: defaultModel is not set.');
@@ -686,6 +781,8 @@ export function resolveImageToolCapabilities(
   settings: ImageGenSettings,
   discovered?: Partial<ImageModelCapabilities>,
 ): ImageToolCapabilities {
+  try { settings = normalizeImageGenSettings(settings); }
+  catch { return { api: null, quality: QUALITY_VALUES, model: null }; }
   const defaultModel = trimmedSetting(settings.defaultModel);
   if (!defaultModel) return { api: null, quality: QUALITY_VALUES, model: null };
   const resolved = resolveModel(defaultModel, settings);
@@ -925,7 +1022,7 @@ export function buildImageGuidelines(caps: ImageToolCapabilities): string[] {
     );
   }
   guidelines.push(
-    'The active model is fixed in settings — there is no `model` parameter. If generation fails on model/size, run /image-gen list and tell the user which knob (defaultModel or size) to adjust.',
+    'The default route is fixed in settings; there is no model/provider parameter. Configured fallback routes are used only after safely classified rejections. For an explicit model comparison use image_compare, never call image_generate repeatedly expecting it to select different models. Use /image-gen list to inspect default, fallback and compare routes.',
   );
   return guidelines;
 }
@@ -934,6 +1031,25 @@ export function buildImageGuidelines(caps: ImageToolCapabilities): string[] {
  * Format a generated-image result as text the LLM can paste verbatim into its
  * reply. Uses inline markdown image syntax with the file stem as the alt text.
  */
+function configuredRouteSummary(settings: ImageGenSettings, kind: 'fallback' | 'compare'): string {
+  try {
+    const routes = configuredImageRoutes(settings, kind);
+    return `${kind === 'fallback' ? 'Fallback' : 'Compare'} routes: ${routes.length ? routes.map((route) => `${route.provider}/${route.model}`).join(', ') : '(disabled)'}`;
+  } catch (error) {
+    return `${kind} routes: ERROR — ${errorMessageForUser(error)}`;
+  }
+}
+
+export function formatComparisonText(report: ImageCompareResult): string {
+  return [
+    `Image comparison: ${report.entries.filter((entry) => entry.status === 'success').length}/${report.entries.length} routes succeeded. Each route is a separate request; costs below belong to that route only.`,
+    ...report.entries.map((entry, index) => [
+      `\n${index + 1}. ${entry.route.provider}/${entry.route.model}: ${entry.status}`,
+      entry.status === 'success' ? formatToolResultText(entry.result) : `${entry.error}\nCost: unknown; failure does not imply zero usage.`,
+    ].join('\n')),
+  ].join('\n');
+}
+
 export function formatToolResultText(result: ImageGenResult): string {
   const lines: string[] = [
     `Generated ${result.images.length} image(s) via ${result.provider} (${result.model}). Show each one to the user as inline markdown — copy the lines below verbatim into your reply:`,
@@ -945,9 +1061,12 @@ export function formatToolResultText(result: ImageGenResult): string {
       return img.revisedPrompt ? [`${md}${dimensions}`, `> revised prompt: ${img.revisedPrompt}`] : [`${md}${dimensions}`];
     }),
   ];
+  if (result.attempts?.length) {
+    lines.push('', 'Route attempts:', ...result.attempts.map((attempt) =>
+      `- ${attempt.route.provider}/${attempt.route.model}: ${attempt.status}${attempt.error ? ` — ${attempt.error}` : ''}`));
+  }
   if (result.metadata?.requestId) lines.push('', `Request ID: ${result.metadata.requestId}`);
-  if (result.metadata?.usage) lines.push(`Usage: ${formatNumericMetadata(result.metadata.usage)}`);
-  if (result.metadata?.cost != null) lines.push(`Cost: ${result.metadata.cost}`);
+  lines.push(...formatAccounting(result.metadata));
   if (result.metadata) lines.push(`Duration: ${result.metadata.durationMs}ms`);
   return lines.join('\n');
 }
@@ -989,13 +1108,6 @@ function encodeUrlSegment(segment: string): string {
  * — including CJK — passes through byte-identical, so POSIX paths that render
  * inline today keep their exact current output.
  */
-function formatNumericMetadata(metadata: Record<string, number>): string {
-  return Object.entries(metadata)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}=${value}`)
-    .join(', ');
-}
-
 function escapeMarkdownUnsafe(path: string): string {
   return path.replace(/[\s#%()?<>]/g, hexEscape);
 }
@@ -1021,8 +1133,7 @@ export function formatCommandSummary(result: ImageGenResult): string {
     ? [
         `  duration: ${result.metadata.durationMs}ms`,
         ...(result.metadata.requestId ? [`  request id: ${result.metadata.requestId}`] : []),
-        ...(result.metadata.usage ? [`  usage: ${formatNumericMetadata(result.metadata.usage)}`] : []),
-        ...(result.metadata.cost != null ? [`  cost: ${result.metadata.cost}`] : []),
+        ...formatAccounting(result.metadata).map((line) => `  ${line}`),
       ]
     : [];
   return [header, ...lines, ...metadata].join('\n');

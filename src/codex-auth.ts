@@ -36,6 +36,7 @@ export async function resolveCodexAuth(registry: ImageModelRegistry): Promise<Co
     throw new ImageGenError(
       'No ChatGPT Plus/Pro Codex login is available. Run /login and select ChatGPT Plus/Pro (Codex).',
       'Codex login missing',
+      'missing-credentials',
     );
   }
 
@@ -97,5 +98,6 @@ function invalidLoginError(): ImageGenError {
   return new ImageGenError(
     'The ChatGPT Codex login is invalid or expired. Run /login and sign in to ChatGPT Plus/Pro again.',
     'Codex login invalid',
+    'missing-credentials',
   );
 }

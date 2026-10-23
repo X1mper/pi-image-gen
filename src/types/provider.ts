@@ -48,9 +48,23 @@ export type ImageProviderAdapter = {
   ): Promise<RawImageResult[]>;
 };
 
-/** Narrow Pi model-registry contract used to resolve subscription OAuth. */
+/** Structural catalog DTOs keep the portable declarations independent of optional Pi peers. */
+export type ImageCostRates = { input: number; output: number; cacheRead: number; cacheWrite: number };
+export type ImagePricingModel = {
+  id: string;
+  provider: string;
+  baseUrl?: string;
+  cost?: ImageCostRates & { tiers?: Array<ImageCostRates & { inputTokensAbove: number }> };
+  /** Trusted host attestation, not inferred from stock catalog rates or supplied by model arguments. */
+  costCompatibility?: 'complete-four-bucket-token-pricing';
+};
+
+/** Narrow Pi model-registry contract used for subscription OAuth and optional image pricing. */
 export type ImageModelRegistry = {
   getAvailable(): Array<{ id: string; provider: string; baseUrl?: string }>;
+  /** Modern Pi image catalog lookup; chat-model prices are never substituted. */
+  findOfType?(type: 'image', provider: string, id: string): ImagePricingModel | undefined;
+  getModelOfType?(type: 'image', provider: string, id: string): ImagePricingModel | undefined;
   /** Resolve the active provider credential, including OAuth refresh when configured. */
   getApiKeyForProvider?(provider: string): Promise<string | undefined>;
   /** Report whether a concrete provider model is currently backed by OAuth. */

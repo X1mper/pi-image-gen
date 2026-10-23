@@ -20,7 +20,12 @@ function httpCategory(status: number): string {
 export function classifyHttpError(res: Response, provider: ResolvedProvider): ImageGenError {
   const where = providerLocator(provider);
   const summary = `${providerLogLabel(provider)} HTTP ${res.status} (${httpCategory(res.status)})`;
-  const err = (message: string) => new ImageGenError(message, summary);
+  // 403 may be a policy refusal; 5xx may follow upstream acceptance. Neither
+  // is evidence that another paid generation is safe.
+  const fallbackReason = res.status === 401 ? 'auth'
+    : res.status === 404 ? 'not-found'
+    : res.status === 429 ? 'rate-limit' : undefined;
+  const err = (message: string) => new ImageGenError(message, summary, fallbackReason);
 
   if (res.status === 401 || res.status === 403) {
     const credential = metaSupportsPiLogin(provider) ? 'credential' : 'API key';

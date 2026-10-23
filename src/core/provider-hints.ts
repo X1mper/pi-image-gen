@@ -62,5 +62,6 @@ export function missingKeyError(provider: ResolvedProvider): ImageGenError {
   return new ImageGenError(
     `Provider "${provider.id}" has no ${credential}. Tell the user to set ${providerLocator(provider)}.`,
     `${providerLogLabel(provider)} missing ${credential}`,
+    'missing-credentials',
   );
 }

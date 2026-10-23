@@ -76,20 +76,22 @@ export async function generateImageCore<Stored>(
       }).then((receipt) => { stored.push(receipt); storageUnconfirmed = false; return receipt; });
       await awaitWithAbort(saving, signal);
     }
-    return { images: [...stored], metadata: buildMetadata(request, raws, outputs, startedAt) };
+    return { images: [...stored], metadata: await buildMetadata(request, raws, outputs, startedAt,
+      undefined, host.calculateCost?.bind(host)) };
   } catch (error) {
     const safe = error instanceof ImageGenError ? error : undefined;
     const timedOut = deadline?.timedOut() ?? false;
     const message = timedOut ? 'Image generation exceeded its execution deadline.'
       : safe?.message ?? 'Image generation could not be completed.';
-    const metadata = buildMetadata(request, raws, outputs, startedAt,
-      error instanceof ProviderResultError ? error.metadata : undefined);
+    const metadata = await buildMetadata(request, raws, outputs, startedAt,
+      error instanceof ProviderResultError ? error.metadata : undefined, host.calculateCost?.bind(host));
     const summary = timedOut ? 'image generation timed out' : safe?.logSummary ?? 'image execution failed';
     throw new ImageCoreError(message, summary, phase, {
       dispatched, uncertain: dispatched && !confirmed,
       storageUncertain: storageUnconfirmed,
       partial: stored.length > 0, stored: [...stored],
-    }, metadata);
+    }, metadata, !timedOut && !signal?.aborted && dispatched && !confirmed
+      ? safe?.fallbackReason : undefined);
   } finally {
     deadline?.cleanup();
   }

@@ -3,6 +3,8 @@ import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { withFileMutationQueue } from '@earendil-works/pi-coding-agent';
 import { join, resolve } from 'node:path';
 import type { ImageGenSettings } from './types.js';
+import { IMAGE_CONFIG_VERSION, normalizeImageGenSettings, validateImageConfigVersion } from './config.js';
+import { errorMessageForUser } from './errors.js';
 
 const SETTINGS_KEY = 'pi-image-gen';
 
@@ -17,7 +19,7 @@ export class SettingsWriteError extends Error {}
 export function updateProjectImageGenSettings(
   cwd: string,
   projectTrusted: boolean,
-  update: Pick<ImageGenSettings, 'defaultProvider' | 'defaultModel'>,
+  update: Pick<ImageGenSettings, 'default' | 'defaultProvider' | 'defaultModel'>,
 ): Promise<void> {
   const settingsPath = resolve(cwd, '.pi', 'settings.json');
   return withFileMutationQueue(settingsPath, () =>
@@ -28,7 +30,7 @@ export function updateProjectImageGenSettings(
 async function updateProjectImageGenSettingsNow(
   cwd: string,
   projectTrusted: boolean,
-  update: Pick<ImageGenSettings, 'defaultProvider' | 'defaultModel'>,
+  update: Pick<ImageGenSettings, 'default' | 'defaultProvider' | 'defaultModel'>,
 ): Promise<void> {
   if (!projectTrusted) {
     throw new SettingsWriteError(
@@ -66,7 +68,17 @@ async function updateProjectImageGenSettingsNow(
   if (current !== undefined && !isRecord(current)) {
     throw new SettingsWriteError('pi-image-gen settings must contain a JSON object.');
   }
-  root[SETTINGS_KEY] = { ...(current ?? {}), ...withoutUndefined(update) };
+  const next: Record<string, unknown> = { ...(current ?? {}), ...withoutUndefined(update) };
+  try {
+    validateImageConfigVersion(current?.version);
+    if (update.default !== undefined) {
+      normalizeImageGenSettings({ default: update.default });
+      next.version = IMAGE_CONFIG_VERSION;
+      delete next.defaultProvider;
+      delete next.defaultModel;
+    }
+  } catch (error) { throw new SettingsWriteError(errorMessageForUser(error)); }
+  root[SETTINGS_KEY] = next;
 
   const tempPath = join(settingsDir, `.settings.json.pi-image-gen-${randomUUID()}`);
   let handle: Awaited<ReturnType<typeof open>> | undefined;

@@ -12,6 +12,7 @@ export const codexAdapter: ImageProviderAdapter = {
       throw new ImageGenError(
         'No ChatGPT Plus/Pro Codex login is available. Run /login and select ChatGPT Plus/Pro (Codex).',
         'Codex model registry unavailable',
+        'missing-credentials',
       );
     }
     const auth = await resolveCodexAuth(runtime.modelRegistry);

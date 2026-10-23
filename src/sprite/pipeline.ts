@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { capabilitiesForApi, genericCapabilitiesForApi } from '../capabilities.js';
-import { resolveModel } from '../config.js';
+import { normalizeImageGenSettings, resolveModel } from '../config.js';
 import { cancelledError, describeWriteError, ImageGenError } from '../errors.js';
 import { generateImage, type GenerateImageOptions } from '../generate.js';
 import type { GenerateImageParams, ImageModelCapabilities } from '../types.js';
@@ -31,6 +31,8 @@ export type SpritePipelineOptions = Omit<GenerateImageOptions, 'onProgress'> & {
 
 export async function runSpritePipeline(params: SpriteGenerateParams, options: SpritePipelineOptions): Promise<SpriteGenerateResult> {
   const startedAt = Date.now();
+  // Sprite plans are tied to one model's geometry/alpha contract; never fan out.
+  options = { ...options, settings: { ...normalizeImageGenSettings(options.settings), fallback: [] } };
   options.onProgress?.('planning');
   const spriteSettings = normalizeSpriteSettings(options.settings.spriteGeneration);
   const plan = planSprite(params, spriteSettings);
@@ -168,6 +170,9 @@ function resultMetadata(generated: Awaited<ReturnType<typeof generateImage>>['me
     ...(generated?.requestId ? { requestId: generated.requestId } : {}),
     ...(generated?.usage ? { usage: generated.usage } : {}),
     ...(generated?.cost != null ? { cost: generated.cost } : {}),
+    ...(generated?.reportedUsage ? { reportedUsage: generated.reportedUsage } : {}),
+    ...(generated?.tokenUsage ? { tokenUsage: generated.tokenUsage } : {}),
+    ...(generated?.costDetails ? { costDetails: generated.costDetails } : {}),
     ...(generated ? { generationDurationMs: generated.durationMs } : {}),
   };
 }

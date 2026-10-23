@@ -20,6 +20,7 @@ import type {
   ResolvedProvider,
 } from '../types.js';
 import { withDefaultPath } from '../url.js';
+import { coreMetadata, parseReportedCost, preferredReportedCost } from '../core/usage.js';
 import { credentialRedirectMode, hasProviderAuthentication, jsonHeaders } from './openai.js';
 
 /**
@@ -128,8 +129,15 @@ export const metaAdapter: ImageProviderAdapter = {
     }
 
     const requestId = typeof json.id === 'string' ? json.id : res.headers.get('x-request-id') ?? undefined;
-    const usage = numericRecord(json.usage);
-    if (out[0] && (requestId || usage)) out[0].metadata = { ...(requestId ? { requestId } : {}), ...(usage ? { usage } : {}) };
+    const usage = isRecord(json.usage) ? json.usage : undefined;
+    const reportedCost = preferredReportedCost(
+      parseReportedCost(json.cost, json.currency, 'provider-response'),
+      parseReportedCost(usage?.cost, usage?.currency, 'provider-response', json.currency),
+    );
+    if (out[0]) out[0].metadata = coreMetadata({
+      ...(requestId ? { requestId } : {}), reportedUsage: usage,
+      ...(reportedCost ? { reportedCost } : {}),
+    });
     if (out.length === 0) {
       throw new ImageGenError(
         `${provider.name} returned no image data — the model may have refused to generate. Tell the user to rephrase the prompt or try a different model.`,
@@ -194,12 +202,6 @@ function metaRequestHeaders(
   headers.authorization = `Bearer ${apiKey}`;
   headers['content-type'] = 'application/json';
   return headers;
-}
-
-function numericRecord(value: unknown): Record<string, number> | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]));
-  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
