@@ -34,6 +34,7 @@ import { SettingsWriteError, updateProjectImageGenSettings } from './settings-wr
 import { migrateImageGenSettings, type MigrationScope } from './settings-migrate.js';
 import { formatSpriteToolResult, spriteProgressMessage } from './sprite/format.js';
 import { runSpritePipeline } from './sprite/pipeline.js';
+import { registerImageSearchTools } from './search/extension.js';
 import { buildSpriteGuidelines, buildSpriteToolParameters } from './sprite/schema.js';
 import { normalizeSpriteSettings } from './sprite/settings.js';
 import type { SpriteGenerateParams } from './sprite/types.js';
@@ -84,6 +85,7 @@ export interface ImageToolCapabilities {
 }
 
 export default function piImageGenExtension(pi: ExtensionAPI): void {
+  registerImageSearchTools(pi);
   let settings: ImageGenSettings = {};
   let sessionCwd = process.cwd();
   let discoveredCapabilities: Partial<ImageModelCapabilities> | undefined;

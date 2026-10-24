@@ -1,12 +1,13 @@
 {
   "name": "@abhishek944/pi-image-gen",
-  "version": "0.7.0",
-  "description": "Image and optional sprite-sheet generation for Pi via ChatGPT Codex subscriptions, OpenAI, Azure OpenAI, Gemini, Qwen, Seedream, Meta Muse Image, Microsoft MAI on Azure, OpenRouter, and custom providers.",
+  "version": "0.8.0",
+  "description": "Image and sprite generation for Pi, plus independent existing-image search via Serper, Brave, SerpApi and Openverse.",
   "keywords": [
     "pi-package",
     "pi",
     "extension",
     "image-generation",
+    "image-search",
     "sprite-generation",
     "apng",
     "codex",
@@ -38,6 +39,11 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
       "default": "./dist/core/index.js"
+    },
+    "./search": {
+      "types": "./dist/search/index.d.ts",
+      "import": "./dist/search/index.js",
+      "default": "./dist/search/index.js"
     },
     "./durable": {
       "types": "./dist/durable.d.ts",

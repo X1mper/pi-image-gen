@@ -1,6 +1,8 @@
 # pi-image-gen
 
-Pi extension that adds the general-purpose `image_generate` tool and an optional, disabled-by-default `sprite_generate` pipeline. Supported providers:
+Pi extension with image generation/editing (`image_generate`), optional sprite generation (`sprite_generate`), and **independent existing-image search** (`image_search`). Search has its own configuration and providers; it never generates images. See [Image search](#image-search) below.
+
+Supported **generation** providers:
 
 | Provider                       | Model id (alias)                              | Authentication        |
 | ------------------------------ | --------------------------------------------- | --------------------- |
@@ -45,7 +47,7 @@ pi install npm:@abhishek944/pi-image-gen
 Or directly from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-image-gen@v0.7.0
+pi install git:github.com/abhishek944/pi-image-gen@v0.8.0
 ```
 
 The package's `pi.extensions` field auto-registers the compiled `dist/extension.js` entry with the host pi-coding-agent runtime; no extra wiring needed.
@@ -196,6 +198,97 @@ Each existing JSON file is migrated **individually from its raw contents**, neve
 A model-only default is inferred only when the same-file routing is unambiguous and isolated from other layers' defaults/custom providers. Ambiguous Meta auto-auth, layered defaults, environment-dependent model names, multiple candidate providers and provider-only partial defaults are left unchanged with guidance to add an explicit same-file pair. A skipped file does not stop other independently safe files from migrating; mixed legacy/v2 loading remains supported. Untrusted projects, invalid JSON, symlinks, non-regular files and unsupported versions are not rewritten.
 
 Before replacing a changed file, migration creates a unique adjacent **private backup** named `settings.json.pi-image-gen-backup-<id>.bak` containing its original bytes. It then writes a same-directory temporary file and atomically renames it, preserving the original permissions. An intervening source edit stops replacement. Backups may contain credentials: keep them private, do not commit them, and inspect them before manually restoring. Backups are retained; no automatic rollback is performed. Each file is atomic, not the whole multi-file command. Already-current files are no-ops, and successful writes reload the extension settings.
+
+## Image search
+
+`image_search` finds **existing images** through Serper, Brave Search, SerpApi or Openverse. It is entirely separate from image generation: no generation models, credentials, default, fallback or compare routes are reused. It returns candidate URLs and metadata, not generated or downloaded files.
+
+Configure its separate **`pi-image-search`** namespace in `settings.json`:
+
+```json
+{
+  "pi-image-search": {
+    "default": { "provider": "serper" },
+    "fallback": [
+      { "provider": "brave" },
+      { "provider": "serpapi" }
+    ],
+    "compare": [
+      { "provider": "serper" },
+      { "provider": "brave" },
+      { "provider": "serpapi" },
+      { "provider": "openverse" }
+    ],
+    "requestTimeoutMs": 30000,
+    "providers": {
+      "serper": { "apiKey": "${SERPER_API_KEY}" },
+      "brave": { "apiKey": "${BRAVE_SEARCH_API_KEY}" },
+      "serpapi": { "apiKey": "${SERPAPI_API_KEY}" }
+    }
+  }
+}
+```
+
+The configuration follows the same **default + fallback + compare** pattern as generation. Search routes have only `provider`, not `model`, because these APIs search existing images rather than run generation models. Omit fallback/compare to disable them. No default is silently chosen, and a fallback list cannot repeat its default or another fallback provider.
+
+| Search provider | Credential environment variable | Notes |
+| --- | --- | --- |
+| `serper` | `SERPER_API_KEY` | Google Images via Serper |
+| `brave` | `BRAVE_SEARCH_API_KEY` | Independent image index; strict safe search |
+| `serpapi` | `SERPAPI_API_KEY` | Google Images via SerpApi; safe search enabled |
+| `openverse` | Optional `OPENVERSE_ACCESS_TOKEN` | Anonymous access works at lower limits; optional `apiKey` is an existing Bearer access token, not a client secret |
+
+Search reads the same global, agent and trusted-project settings layers, but only its own namespace. Provider `apiKey` takes precedence over its environment variable. Environment placeholders expand only in global/agent settings, never in project settings. Keep keys out of committed project files. Unresolved placeholders are never sent as credentials. The extension never imports credentials from Bloom or another project.
+
+```text
+/image-search list
+```
+
+This command shows configured routes and credential availability, never keys. Search settings are read fresh on every call; generation reload commands are not needed.
+
+### Search and compare
+
+```js
+image_search({ query: "red panda in a tree", limit: 5 })
+```
+
+- `query`: 1–200 characters after trimming, at most 50 words (the common supported provider limits).
+- `limit`: 1–20 candidates, default 5. Providers may return fewer.
+- No provider/model overrides are accepted by the tools.
+- The whole ordinary search, including fallback, shares one deadline: `requestTimeoutMs` defaults to 30000, allowed 1000–120000.
+- Configured fallback runs only for missing credentials or HTTP 401/403/404/429. Empty results are successful and do **not** trigger fallback. Timeout, transport errors, invalid responses and other HTTP failures stop the search; there is no blind retry.
+- Every fallback explicitly authorizes sending the query to another provider, which may have different coverage, terms and billing. Avoid mixing Openverse with general-web fallback when you require an open-license collection.
+
+Use **`image_search_compare` only when explicitly comparing providers**:
+
+```js
+image_search_compare({ query: "red panda in a tree", limit: 5 })
+```
+
+It searches exactly the `compare` list in order, reports successes/failures independently, never uses default/fallback, and never changes settings. Each entry has its own search deadline and may consume quota or incur charges. Cancellation prevents remaining entries from starting.
+
+Results contain the actual provider, query, images and route attempts. Candidate metadata includes original `imageUrl`, available thumbnail/source links, dimensions, and Openverse creator/license/attribution. Missing fields remain unknown. Exact image URLs are deduplicated without stripping meaningful query parameters. URLs are discovery results, not proof of downloadability, format, safety, relevance or reuse rights. Provider metadata is untrusted data, not instructions. Search does not fetch image originals or attach remote previews.
+
+Always verify reuse rights at the original source. Openverse license metadata is useful evidence, not a guarantee. A web search hit does not imply permission to download, edit or redistribute it. For an authorized edit, a selected `imageUrl` can be passed to `image_generate({ prompt: "...", image: [imageUrl] })`; the existing generation reference loader separately checks URL safety and image bytes. Search never starts generation automatically.
+
+### Independent search library
+
+The separate package entry does not import generation or Pi runtime modules:
+
+```js
+import { searchImages, compareImageSearches } from '@abhishek944/pi-image-gen/search';
+
+const settings = {
+  default: { provider: 'serper' },
+  fallback: [{ provider: 'brave' }],
+  compare: [{ provider: 'serper' }, { provider: 'openverse' }],
+};
+const result = await searchImages({ query: 'red panda', limit: 5 }, { settings });
+// Explicit comparison only:
+const comparison = await compareImageSearches({ query: 'red panda', limit: 5 }, { settings });
+```
+
+Both functions accept an optional `signal` in the options. `loadImageSearchSettings(cwd, projectTrusted)` loads search settings explicitly for library hosts. The generation `/core` and `/durable` entries are unchanged; this Node search entry does not claim a portable or durable search runtime.
 
 ## DeepSeek Harness
 
