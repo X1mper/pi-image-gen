@@ -1,3 +1,5 @@
+export type ImageResize = { width: number; height: number; fit?: 'contain' | 'cover' };
+
 export type GenerateImageParams = {
   prompt: string;
   /**
@@ -54,6 +56,8 @@ export type GenerateImageParams = {
   seriesMaxImages?: number;
   /** Output filename prefix. */
   filename?: string;
+  /** Optional desktop-only exact-size PNG copy; provider size controls are unchanged. */
+  resize?: ImageResize;
   /** Override settings.outputDir for this call. */
   outputDir?: string;
 };

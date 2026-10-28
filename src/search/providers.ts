@@ -2,7 +2,7 @@ import { safeFetch } from '@amaster.ai/pi-shared';
 import { readResponseBytes } from '../core/response.js';
 import { imageSearchCredential, isRecord } from './config.js';
 import { ImageSearchError } from './errors.js';
-import type { ImageSearchImage, ImageSearchProvider, ImageSearchSettings } from './types.js';
+import type { ImageSearchCandidate, ImageSearchProvider, ImageSearchSettings } from './types.js';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 type Row = Record<string, unknown>;
@@ -48,7 +48,7 @@ function child(row: Row, key: string): Row {
 }
 
 /** Each adapter owns its provider's wire shape; the caller sees one candidate contract. */
-function normalize(provider: ImageSearchProvider, row: Row): ImageSearchImage | undefined {
+function normalize(provider: ImageSearchProvider, row: Row): ImageSearchCandidate | undefined {
   const properties = child(row, 'properties');
   const imageUrl = link(provider === 'serper' ? row.imageUrl : provider === 'brave' ? properties.url :
     provider === 'serpapi' ? row.original : row.url);
@@ -75,7 +75,7 @@ export async function searchProvider(
   limit: number,
   settings: ImageSearchSettings,
   signal: AbortSignal,
-): Promise<ImageSearchImage[]> {
+): Promise<ImageSearchCandidate[]> {
   const key = imageSearchCredential(provider, settings);
   if (!key && provider !== 'openverse') {
     throw new ImageSearchError(`Image search credentials are missing for ${provider}. Configure its search apiKey or environment variable.`, 'credentials', true);
@@ -129,7 +129,7 @@ export async function searchProvider(
     // SerpApi can omit images_results on a documented no-results response.
     if (provider === 'serpapi' && rows === undefined && child(body, 'search_information').image_results_state === 'Fully empty') return [];
     if (!Array.isArray(rows)) throw new ImageSearchError(`${provider} returned an invalid image list.`, 'response');
-    const images: ImageSearchImage[] = [];
+    const images: ImageSearchCandidate[] = [];
     const seen = new Set<string>();
     for (const row of rows) {
       if (!isRecord(row)) continue;

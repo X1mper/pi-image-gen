@@ -1,3 +1,5 @@
+import { RasterError, validateResize } from '../node/raster.js';
+import { downloadSearchImages } from './download.js';
 import { normalizeImageSearchSettings } from './config.js';
 import { imageSearchErrorMessage, ImageSearchError } from './errors.js';
 import { searchProvider } from './providers.js';
@@ -17,6 +19,11 @@ function input(params: ImageSearchParams): { query: string; limit: number } {
   if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
     throw new ImageSearchError('Image search limit must be an integer from 1 to 20.', 'input');
   }
+  try { validateResize(params.resize); }
+  catch (error) { throw new ImageSearchError(error instanceof RasterError ? error.message : 'Invalid resize.', 'input'); }
+  if (params.outputDir !== undefined && (typeof params.outputDir !== 'string' || !params.outputDir.trim())) {
+    throw new ImageSearchError('outputDir must be a nonempty directory path.', 'input');
+  }
   return { query: params.query.trim(), limit };
 }
 
@@ -24,6 +31,7 @@ async function runRoutes(
   params: ReturnType<typeof input>,
   routes: ImageSearchRoute[],
   settings: ImageSearchSettings,
+  files: { params: ImageSearchParams; cwd: string },
   callerSignal?: AbortSignal,
 ): Promise<ImageSearchResult> {
   const deadline = AbortSignal.timeout(settings.requestTimeoutMs ?? 30000);
@@ -34,7 +42,8 @@ async function runRoutes(
       signal.throwIfAborted();
       const images = await searchProvider(route.provider, params.query, params.limit, settings, signal);
       attempts.push({ route, status: 'success' });
-      return { query: params.query, provider: route.provider, images, attempts };
+      const downloaded = await downloadSearchImages(images, files.params, files.cwd, signal);
+      return { query: params.query, provider: route.provider, attempts, ...downloaded };
     } catch (error) {
       if (callerSignal?.aborted) throw new ImageSearchError('Image search was cancelled.', 'cancelled');
       if (deadline.aborted) throw new ImageSearchError('Image search exceeded its deadline. No automatic retry was made.', 'timeout');
@@ -46,12 +55,13 @@ async function runRoutes(
   throw new ImageSearchError('Configure pi-image-search.default before searching.', 'configuration');
 }
 
-/** Existing-image discovery only. Does not generate, download, save or modify images. */
+/** Search existing images and always return validated local downloads, optionally resized. */
 export async function searchImages(params: ImageSearchParams, options: ImageSearchOptions): Promise<ImageSearchResult> {
   const request = input(params);
   const settings = normalizeImageSearchSettings(options.settings);
   if (!settings.default) throw new ImageSearchError('Configure pi-image-search.default with a provider before searching.', 'configuration');
-  return runRoutes(request, [settings.default, ...(settings.fallback ?? [])], settings, options.signal);
+  return runRoutes(request, [settings.default, ...(settings.fallback ?? [])], settings,
+    { params, cwd: options.cwd ?? process.cwd() }, options.signal);
 }
 
 /** Explicit configured comparison. Never uses default/fallback or retries a failed entry. */
@@ -66,7 +76,8 @@ export async function compareImageSearches(params: ImageSearchParams, options: I
       continue;
     }
     try {
-      const result = await runRoutes(request, [route], settings, options.signal);
+      const result = await runRoutes(request, [route], settings,
+        { params, cwd: options.cwd ?? process.cwd() }, options.signal);
       entries.push({ route, status: 'success', result });
     } catch (error) {
       entries.push({ route, status: options.signal?.aborted ? 'cancelled' : 'failed', error: imageSearchErrorMessage(error) });

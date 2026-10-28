@@ -1,6 +1,9 @@
-import { mkdir, open, unlink } from 'node:fs/promises';
+import { mkdir, unlink } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import { cancelledError, describeWriteError, isAbortError } from '../errors.js';
+import { describeWriteError } from '../errors.js';
+import { desktopTimeout } from './configuration.js';
+import { writeUnique } from '../node/output-files.js';
+import { RasterError, resizeRaster } from '../node/raster.js';
 import type { GeneratedImage, GenerateImageParams } from '../types.js';
 import type { ImageStoreContext, Original } from '../core/protocol.js';
 import type { GenerateImageOptions } from './options.js';
@@ -16,6 +19,7 @@ export function desktopSink(params: GenerateImageParams, options: GenerateImageO
   const directory = target?.trim() ? target : '.pi/images';
   const outDir = isAbsolute(directory) ? directory : resolve(options.cwd, directory);
   const saved: GeneratedImage[] = [];
+  const resizeInputs: Uint8Array[] = [];
   let stem: string | undefined;
   let ready = false;
   const begin = () => { stem ??= sanitizeFilename(params.filename ?? `${model}-${formatStamp((options.now ?? (() => new Date()))())}`); };
@@ -36,7 +40,32 @@ export function desktopSink(params: GenerateImageParams, options: GenerateImageO
           ? { dimensions: { width: info.width, height: info.height } } : {}),
         ...(info.revisedPrompt !== undefined ? { revisedPrompt: info.revisedPrompt } : {}) };
       saved.push(image);
+      if (params.resize) resizeInputs.push(output.bytes);
       return image;
+    },
+    /** Run only after core success, outside the original-storage rollback/deadline. */
+    async resizeSaved(images: readonly GeneratedImage[]): Promise<GeneratedImage[]> {
+      if (!params.resize) return [...images];
+      const deadline = AbortSignal.timeout(desktopTimeout(options.settings.requestTimeoutMs));
+      const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+      const resizedImages: GeneratedImage[] = [];
+      for (const [index, image] of images.entries()) {
+        try {
+          signal.throwIfAborted();
+          const resized = await resizeRaster(resizeInputs[index]!, params.resize);
+          signal.throwIfAborted();
+          const suffix = images.length > 1 ? `-${index + 1}` : '';
+          const path = await writeUnique(outDir, `${stem}${suffix}-resized`, 'png', resized.bytes, signal);
+          resizedImages.push({ ...image, path, originalPath: image.path,
+            mimeType: resized.mimeType, dimensions: { width: resized.width, height: resized.height } });
+        } catch (error) {
+          // Core has succeeded. Local failure/cancellation must never roll back paid originals.
+          resizedImages.push({ ...image, resizeError: signal.aborted ? 'Resize cancelled or timed out; the original is preserved.'
+            : error instanceof RasterError ? error.message : 'Could not save the resized copy; the original is preserved.' });
+        }
+      }
+      resizeInputs.length = 0;
+      return resizedImages;
     },
     async cleanup(): Promise<void> {
       // Desktop retains its legacy local partial-batch policy; core never deletes host receipts.
@@ -48,33 +77,6 @@ export function desktopSink(params: GenerateImageParams, options: GenerateImageO
       }));
     },
   };
-}
-
-/** O_EXCL owns each candidate before writing; never unlink a pre-existing path. */
-async function writeUnique(dir: string, stem: string, ext: string, bytes: Uint8Array, signal: AbortSignal): Promise<string> {
-  for (let version = 1; ; version++) {
-    if (signal.aborted) throw cancelledError('image generation');
-    const path = resolve(dir, version === 1 ? `${stem}.${ext}` : `${stem}-v${version}.${ext}`);
-    let created = false;
-    try {
-      const file = await open(path, 'wx');
-      created = true;
-      try { await file.writeFile(bytes, { signal }); }
-      finally { await file.close(); }
-      if (signal.aborted) throw cancelledError('image generation');
-      return path;
-    } catch (error) {
-      if (created) {
-        try { await unlink(path); }
-        catch (cleanupError) {
-          if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') logCleanupFailure(cleanupError);
-        }
-      }
-      if (signal.aborted || isAbortError(error)) throw cancelledError('image generation');
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw describeWriteError('write the image file', error);
-    }
-  }
 }
 
 function logCleanupFailure(error: unknown): void {

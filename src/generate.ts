@@ -1,3 +1,4 @@
+import { RasterError, validateResize } from './node/raster.js';
 import { generateImageCore } from './core/engine.js';
 import { canonicalProviderRouteId, configuredImageRoutes, normalizeImageGenSettings } from './config.js';
 import { prepareImageRequest } from './core/prepare.js';
@@ -8,6 +9,8 @@ import { cancelledError, errorMessageForUser, ImageGenError } from './errors.js'
 import { desktopHost } from './desktop/host.js';
 import { desktopSink } from './desktop/output-sink.js';
 import type { GenerateImageOptions } from './desktop/options.js';
+import type { ImageCallResult } from './core/protocol.js';
+import type { GeneratedImage } from './types.js';
 import type { GenerateImageParams, ImageGenResult, ImageRouteAttempt, ImageRouteSelection } from './types.js';
 
 export type { GenerateImageOptions } from './desktop/options.js';
@@ -18,6 +21,8 @@ export async function generateImage(
   options: GenerateImageOptions,
 ): Promise<ImageGenResult> {
   if (options.signal?.aborted) throw cancelledError('image generation');
+  try { validateResize(params.resize); }
+  catch (error) { throw new ImageGenError(error instanceof RasterError ? error.message : 'Invalid resize.', 'invalid resize'); }
   const settings = normalizeImageGenSettings(options.settings);
   const fallbacks = configuredImageRoutes(settings, 'fallback');
   const primary = desktopRoute(params, { ...options, settings });
@@ -59,29 +64,12 @@ export async function generateImage(
 /** One dispatch only; orchestration above never changes provider adapter semantics. */
 async function generateSingleImage(params: GenerateImageParams, options: GenerateImageOptions): Promise<ImageGenResult> {
   const route = desktopRoute(params, options);
-  const { outputDir: _outputDir, ...args } = params;
+  const { outputDir: _outputDir, resize: _resize, ...args } = params;
   const request = prepareImageRequest(args, {}, route);
   const sink = desktopSink(params, options, route.requestedId);
+  let result: ImageCallResult<GeneratedImage>;
   try {
-    const result = await generateImageCore(request, desktopHost(request, options, sink));
-    const metadata = result.metadata;
-    const usage = legacyNumericUsage(metadata.reportedUsage);
-    return {
-      model: route.requestedId,
-      provider: route.provider.builtIn ? route.provider.id : `${route.provider.id} (custom)`,
-      images: [...result.images],
-      metadata: {
-        durationMs: metadata.durationMs,
-        ...(metadata.requestId ? { requestId: metadata.requestId } : {}),
-        ...(usage ? { usage } : {}),
-        ...(metadata.reportedUsage ? { reportedUsage: metadata.reportedUsage } : {}),
-        ...(metadata.tokenUsage ? { tokenUsage: metadata.tokenUsage } : {}),
-        costDetails: metadata.cost,
-        // Preserve the public numeric reported-cost contract; never disguise an estimate as actual.
-        ...(metadata.cost.kind === 'reported' && metadata.cost.basis === 'provider-response'
-          ? { cost: metadata.cost.amount } : {}),
-      },
-    };
+    result = await generateImageCore(request, desktopHost(request, options, sink));
   } catch (error) {
     await sink.cleanup();
     if (error instanceof ImageCoreError) {
@@ -94,4 +82,23 @@ async function generateSingleImage(params: GenerateImageParams, options: Generat
     }
     throw error;
   }
+  // Original storage is committed. Optional local processing must stay outside rollback.
+  const metadata = result.metadata;
+  const usage = legacyNumericUsage(metadata.reportedUsage);
+  return {
+    model: route.requestedId,
+    provider: route.provider.builtIn ? route.provider.id : `${route.provider.id} (custom)`,
+    images: await sink.resizeSaved(result.images),
+    metadata: {
+      durationMs: metadata.durationMs,
+      ...(metadata.requestId ? { requestId: metadata.requestId } : {}),
+      ...(usage ? { usage } : {}),
+      ...(metadata.reportedUsage ? { reportedUsage: metadata.reportedUsage } : {}),
+      ...(metadata.tokenUsage ? { tokenUsage: metadata.tokenUsage } : {}),
+      costDetails: metadata.cost,
+      // Preserve the public numeric reported-cost contract; never disguise an estimate as actual.
+      ...(metadata.cost.kind === 'reported' && metadata.cost.basis === 'provider-response'
+        ? { cost: metadata.cost.amount } : {}),
+    },
+  };
 }

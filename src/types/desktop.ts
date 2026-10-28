@@ -122,6 +122,10 @@ export type GeneratedImage = {
   /** Pass-through revised prompt if the provider returned one (e.g. OpenAI). */
   revisedPrompt?: string;
   dimensions?: ImageDimensions;
+  /** Untouched provider original when path identifies a resized copy. */
+  originalPath?: string;
+  /** Resize failed locally; path still identifies the successfully saved original. */
+  resizeError?: string;
 };
 
 export type ImageRouteAttempt = {

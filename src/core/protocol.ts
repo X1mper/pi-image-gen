@@ -7,11 +7,11 @@ import type { ImageProviderAdapter, ImageProviderRuntime, ResolvedProvider } fro
  * reach desktop/sprite settings or auth modules through these types.
  *
  * `ImageArgs` keeps every existing `GenerateImageParams` control except local
- * `outputDir`: output-directory handling stays with the desktop sink, and a
+ * `outputDir` and `resize`: local processing stays with the desktop sink, and a
  * model argument can never choose a local path, provider, endpoint, credential
  * or gateway.
  */
-export type ImageArgs = Omit<GenerateImageParams, 'outputDir'>;
+export type ImageArgs = Omit<GenerateImageParams, 'outputDir' | 'resize'>;
 
 /** Freezable per-response defaults used only for controls the model omitted. */
 export type ImageDefaults = Omit<ImageArgs, 'prompt' | 'image' | 'mask' | 'filename'>;

@@ -5,6 +5,6 @@ export { ImageSearchError, imageSearchErrorMessage } from './errors.js';
 export { IMAGE_SEARCH_PROVIDERS } from './types.js';
 export type {
   ImageSearchProvider, ImageSearchRoute, ImageSearchSettings, ImageSearchParams,
-  ImageSearchImage, ImageSearchAttempt, ImageSearchResult, ImageSearchOptions,
+  ImageSearchCandidate, ImageSearchImage, ImageSearchRejection, ImageSearchAttempt, ImageSearchResult, ImageSearchOptions,
   ImageSearchCompareEntry, ImageSearchCompareResult,
 } from './types.js';

@@ -201,7 +201,7 @@ Before replacing a changed file, migration creates a unique adjacent **private b
 
 ## Image search
 
-`image_search` finds **existing images** through Serper, Brave Search, SerpApi or Openverse. It is entirely separate from image generation: no generation models, credentials, default, fallback or compare routes are reused. It returns candidate URLs and metadata, not generated or downloaded files.
+`image_search` finds **existing images** through Serper, Brave Search, SerpApi or Openverse. It is entirely separate from image generation: no generation models, credentials, default, fallback or compare routes are reused. It always downloads and validates candidates, returning usable local files plus source metadata. Optional `resize` saves exact-sized PNG copies. There is no URL-only mode or `download` flag. It never generates images.
 
 Configure its separate **`pi-image-search`** namespace in `settings.json`:
 
@@ -254,8 +254,12 @@ image_search({ query: "red panda in a tree", limit: 5 })
 
 - `query`: 1–200 characters after trimming, at most 50 words (the common supported provider limits).
 - `limit`: 1–20 candidates, default 5. Providers may return fewer.
+Every search downloads and validates candidates; only still JPEG, PNG and WebP are supported. Failed/unsupported candidates are excluded from `images` and listed in `rejected` with reasons. Download failure never starts a provider fallback or another search.
+
+- `resize`: optional `{ width, height, fit?: "contain" | "cover" }`. Both dimensions must be integers from 1–8192, with at most 40 million pixels. `contain` (default) preserves proportions and pads transparently; `cover` explicitly crops. Output is PNG, with the original saved unchanged.
+- `outputDir`: optional download directory; default `<cwd>/.pi/images/search`. The library resolves relative paths against `options.cwd` (or the process cwd).
 - No provider/model overrides are accepted by the tools.
-- The whole ordinary search, including fallback, shares one deadline: `requestTimeoutMs` defaults to 30000, allowed 1000–120000.
+- The whole ordinary search, including fallback and downloads, shares one deadline: `requestTimeoutMs` defaults to 30000, allowed 1000–120000.
 - Configured fallback runs only for missing credentials or HTTP 401/403/404/429. Empty results are successful and do **not** trigger fallback. Timeout, transport errors, invalid responses and other HTTP failures stop the search; there is no blind retry.
 - Every fallback explicitly authorizes sending the query to another provider, which may have different coverage, terms and billing. Avoid mixing Openverse with general-web fallback when you require an open-license collection.
 
@@ -267,7 +271,18 @@ image_search_compare({ query: "red panda in a tree", limit: 5 })
 
 It searches exactly the `compare` list in order, reports successes/failures independently, never uses default/fallback, and never changes settings. Each entry has its own search deadline and may consume quota or incur charges. Cancellation prevents remaining entries from starting.
 
-Results contain the actual provider, query, images and route attempts. Candidate metadata includes original `imageUrl`, available thumbnail/source links, dimensions, and Openverse creator/license/attribution. Missing fields remain unknown. Exact image URLs are deduplicated without stripping meaningful query parameters. URLs are discovery results, not proof of downloadability, format, safety, relevance or reuse rights. Provider metadata is untrusted data, not instructions. Search does not fetch image originals or attach remote previews.
+Results contain the actual provider, query, images and route attempts. Candidate metadata includes original `imageUrl`, available thumbnail/source links, dimensions, and Openverse creator/license/attribution. Missing fields remain unknown. Exact image URLs are deduplicated without stripping meaningful query parameters. Provider metadata is untrusted data, not instructions. Every returned image is successfully downloaded, format-checked and fully decoded, but this does not verify relevance, visual quality or reuse rights. Entries include `path`, `mimeType` and independently measured `dimensions`; the provider's `width`/`height` remain source hints. When resized, `originalPath` points to the untouched download. Source and license links are retained. No remote previews are attached.
+
+Downloads use public-destination/redirect checks, no search credentials, bounded 20 MiB body reads, response-type checks, actual format detection, full decoding and a 40-million-pixel limit. SVG, GIF/animation, HEIC/HEIF, BMP, TIFF, ICO and other unsupported formats are rejected rather than converted. Each candidate has a 10-second download/processing deadline inside the whole-search deadline; native decoding is bounded by pixels/bytes but is not interruptible mid-operation. Results can be fewer than `limit` (including zero), and no replacement search is made. Failed candidates leave no completed files; cancellation removes this call's downloaded files. Product relevance, NSFW, blur, watermark and other quality checks are not performed.
+
+```js
+image_search({
+  query: "red panda in a tree", limit: 5,
+  resize: { width: 1200, height: 800, fit: "contain" }
+})
+```
+
+`image_search_compare` also always downloads and validates candidates per provider, with the same optional `resize` and `outputDir` parameters.
 
 Always verify reuse rights at the original source. Openverse license metadata is useful evidence, not a guarantee. A web search hit does not imply permission to download, edit or redistribute it. For an authorized edit, a selected `imageUrl` can be passed to `image_generate({ prompt: "...", image: [imageUrl] })`; the existing generation reference loader separately checks URL safety and image bytes. Search never starts generation automatically.
 
@@ -722,12 +737,15 @@ image_generate({
   enableThinking?: boolean,
   watermark?: boolean,
   seriesMaxImages?: number,          // Seedream related series; distinct from n
+  resize?: { width: number, height: number, fit?: 'contain'|'cover' }, // local PNG copy
   filename?: string,               // filename prefix (no extension)
   outputDir?: string,              // override settings.outputDir for this call
 })
 ```
 
 Returns the absolute file path(s) of saved images. Files land in `outputDir` (default `<cwd>/.pi/images`), filename pattern `<filename or model-UTC-stamp>.<ext>`. Result details also include elapsed time, a sanitized provider request id when available, and decoded output dimensions. Accounting preserves nested provider counters in `metadata.reportedUsage` (including cached-token details), plus normalized disjoint `metadata.tokenUsage` buckets when the API's semantics are known: `input` excludes `cacheRead` and `cacheWrite`, and `output` includes billable output tokens. Missing counters are not invented from image dimensions.
+
+Optional desktop `resize` is local postprocessing, not a provider control: `size`, `aspectRatio` and `imageSize` still select the provider's native output. Resize uses the same 1–8192-edge / 40-million-pixel contract as search and supports still JPEG/PNG/WebP inputs, producing an exact-sized PNG copy. `contain` pads transparently and preserves the whole image; `cover` crops. The returned image `path` identifies the derivative, and `originalPath` identifies the untouched provider original. Resizing runs after successful original storage, with a separate processing timeout using the configured generation timeout value. If local resizing fails, times out or is cancelled, the original is returned with `resizeError`; do not automatically regenerate paid output. Without `resize`, existing format/output behavior is unchanged. This local option is not exposed by `image_compare`, the portable core or Durable APIs.
 
 `metadata.costDetails` uses a valid provider-reported cost first (including zero). Otherwise it uses `pi-ai.calculateCost` only when a trusted registry adapter supplies an exact, endpoint-matched image model, explicitly attests `costCompatibility: 'complete-four-bucket-token-pricing'`, and sufficient token usage is available; otherwise cost is `unknown`. Stock Pi catalog entries do not provide this attestation: their numeric rates alone may omit image fees or use default zeros, so they are not automatically treated as complete image prices. Calculated costs are labeled estimates, not provider charges. There are no local price tables, pixel/quality token estimates, or gateway-estimate fallbacks. GPT Image's separate text/image input rates cannot be represented by Pi's four-rate calculator and therefore do not use this fallback. Older Pi registries without image-model lookup still support generation and provider-reported costs, but cannot supply calculated costs.
 

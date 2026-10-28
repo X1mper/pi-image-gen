@@ -24,6 +24,7 @@ import {
 } from './config.js';
 import { errorMessageForUser, toLogSummary } from './errors.js';
 import { generateImage } from './generate.js';
+import { imageResizeSchema } from './resize-schema.js';
 import { compareImages } from './compare.js';
 import { formatAccounting } from './format-accounting.js';
 import { MAX_GENERATED_IMAGES, MAX_REFERENCE_IMAGE_INPUTS } from './image-input.js';
@@ -981,6 +982,7 @@ export function buildImageToolParameters(caps: ImageToolCapabilities): TObject {
     ...(model?.supportsSeries
       ? { seriesMaxImages: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_GENERATED_IMAGES, description: 'Maximum related images for a Seedream series; this is not the same as independent n variants.' })) }
       : {}),
+    resize: Type.Optional(imageResizeSchema()),
     filename: Type.Optional(Type.String({ description: 'Filename prefix (without extension).' })),
     outputDir: Type.Optional(
       Type.String({
@@ -1009,6 +1011,7 @@ export function buildImageGuidelines(caps: ImageToolCapabilities): string[] {
         ]
       : []),
     'For edits and multi-image conditioning, label each reference by role (e.g. "Image 1: edit target; Image 2: style reference") and restate invariants every iteration ("change only X; keep Y unchanged") to reduce drift.',
+    'For exact final dimensions, use optional resize:{width,height,fit}. It runs locally after generation, separate from provider size/aspectRatio/imageSize. contain (default) pads; cover explicitly crops. Originals remain available at originalPath. Report resizeError if resizing failed; do not regenerate paid output automatically.',
     'For text inside an image, quote the exact string verbatim and specify placement; spell uncommon words letter-by-letter when accuracy matters.',
   ];
   guidelines.push(
@@ -1060,7 +1063,11 @@ export function formatToolResultText(result: ImageGenResult): string {
       const alt = altFromPath(img.path);
       const md = `![${alt}](${markdownImageUrl(img.path)})`;
       const dimensions = img.dimensions ? ` (${img.dimensions.width}×${img.dimensions.height})` : '';
-      return img.revisedPrompt ? [`${md}${dimensions}`, `> revised prompt: ${img.revisedPrompt}`] : [`${md}${dimensions}`];
+      return [ `${md}${dimensions}`,
+        ...(img.originalPath ? [`Original: ${img.originalPath}`] : []),
+        ...(img.resizeError ? [`Resize failed; showing saved original: ${img.resizeError}`] : []),
+        ...(img.revisedPrompt ? [`> revised prompt: ${img.revisedPrompt}`] : []),
+      ];
     }),
   ];
   if (result.attempts?.length) {
@@ -1126,11 +1133,12 @@ function hexEscape(ch: string): string {
  */
 export function formatCommandSummary(result: ImageGenResult): string {
   const header = `Generated ${result.images.length} image(s) via ${result.provider} (${result.model}):`;
-  const lines = result.images.flatMap((img) =>
-    img.revisedPrompt
-      ? [`  ${img.path}`, `    revised prompt: ${img.revisedPrompt}`]
-      : [`  ${img.path}`],
-  );
+  const lines = result.images.flatMap((img) => [
+    `  ${img.path}`,
+    ...(img.originalPath ? [`    original: ${img.originalPath}`] : []),
+    ...(img.resizeError ? [`    resize failed: ${img.resizeError}`] : []),
+    ...(img.revisedPrompt ? [`    revised prompt: ${img.revisedPrompt}`] : []),
+  ]);
   const metadata = result.metadata
     ? [
         `  duration: ${result.metadata.durationMs}ms`,
