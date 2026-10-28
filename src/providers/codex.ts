@@ -1,4 +1,4 @@
-import { resolveCodexAuth, withoutProtectedCodexHeaders } from '../codex-auth.js';
+import { CODEX_IMAGE_LOGIN_COMMAND, resolveCodexAuth, withoutProtectedCodexHeaders } from '../codex-auth.js';
 import { ImageGenError } from '../errors.js';
 import type { ImageProviderAdapter, ResolvedImageInput } from '../types.js';
 import { parseImagesResponse } from './openai.js';
@@ -10,7 +10,7 @@ export const codexAdapter: ImageProviderAdapter = {
   async generate(provider, remoteModelId, params, fetchImpl, signal, inputs, runtime) {
     if (!runtime?.modelRegistry) {
       throw new ImageGenError(
-        'No ChatGPT Plus/Pro Codex login is available. Run /login and select ChatGPT Plus/Pro (Codex).',
+        `No Codex image login is available. Run ${CODEX_IMAGE_LOGIN_COMMAND}.`,
         'Codex model registry unavailable',
         'missing-credentials',
       );

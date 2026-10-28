@@ -24,6 +24,8 @@ import {
 } from './config.js';
 import { errorMessageForUser, toLogSummary } from './errors.js';
 import { generateImage } from './generate.js';
+import { hasCodexLogin } from './codex-auth.js';
+import { registerCodexImageLogin } from './codex-login.js';
 import { imageResizeSchema } from './resize-schema.js';
 import { compareImages } from './compare.js';
 import { formatAccounting } from './format-accounting.js';
@@ -86,6 +88,7 @@ export interface ImageToolCapabilities {
 }
 
 export default function piImageGenExtension(pi: ExtensionAPI): void {
+  registerCodexImageLogin(pi);
   registerImageSearchTools(pi);
   let settings: ImageGenSettings = {};
   let sessionCwd = process.cwd();
@@ -713,9 +716,7 @@ function discoverLoginRoutes(
         return false;
       }
     };
-    const codex = available.some(
-      (model) => model.provider === 'openai-codex' && isOAuth(model),
-    );
+    const codex = hasCodexLogin(registry);
     const metaRoute = resolveModel('muse-image-1.0', {
       ...settings,
       defaultProvider: 'meta-subscription',

@@ -3,6 +3,17 @@ import type { ImageModelRegistry } from './types.js';
 
 const AUTH_CLAIM = 'https://api.openai.com/auth';
 
+export const CODEX_IMAGE_LOGIN_PROVIDER = 'pi-image-gen-openai';
+export const CODEX_IMAGE_LOGIN_COMMAND = `/login ${CODEX_IMAGE_LOGIN_PROVIDER}`;
+
+/** Availability only: no token retrieval/refresh and no dependency on chat models. */
+export function hasCodexLogin(registry: ImageModelRegistry): boolean {
+  return isConfirmedOAuth(registry, { id: '', provider: CODEX_IMAGE_LOGIN_PROVIDER }) ||
+    isConfirmedOAuth(registry, { id: '', provider: 'openai-codex' }) ||
+    registry.getAvailable().some((model) =>
+      model.provider === 'openai-codex' && isConfirmedOAuth(registry, model));
+}
+
 export type CodexAuth = {
   headers: Record<string, string>;
 };
@@ -28,13 +39,20 @@ export function extractCodexAccountId(token: string): string {
 }
 
 export async function resolveCodexAuth(registry: ImageModelRegistry): Promise<CodexAuth> {
-  const model = registry
+  // Select once: a failed refresh must never silently switch accounts.
+  const provider = isConfirmedOAuth(registry, { id: '', provider: CODEX_IMAGE_LOGIN_PROVIDER })
+    ? CODEX_IMAGE_LOGIN_PROVIDER
+    : 'openai-codex';
+  const model = provider === 'openai-codex' ? registry
     .getAvailable()
-    .filter((candidate) => candidate.provider === 'openai-codex')
-    .sort((a, b) => a.id.localeCompare(b.id))[0];
-  if (!model || !isConfirmedOAuth(registry, model)) {
+    .filter((candidate) => candidate.provider === provider)
+    .sort((a, b) => a.id.localeCompare(b.id))[0] : undefined;
+  if (!isConfirmedOAuth(registry, model ?? { id: '', provider })) {
+    const chatLoginHint = isConfirmedOAuth(registry, { id: '', provider: 'openai' })
+      ? ' Your existing openai ChatGPT chat login uses a different authorization flow and cannot be reused for this image route.'
+      : '';
     throw new ImageGenError(
-      'No ChatGPT Plus/Pro Codex login is available. Run /login and select ChatGPT Plus/Pro (Codex).',
+      `No compatible image login was detected.${chatLoginHint} Run ${CODEX_IMAGE_LOGIN_COMMAND}. An existing Pi openai-codex OAuth login is also detected automatically.`,
       'Codex login missing',
       'missing-credentials',
     );
@@ -42,7 +60,12 @@ export async function resolveCodexAuth(registry: ImageModelRegistry): Promise<Co
 
   let resolved: Awaited<ReturnType<ImageModelRegistry['getApiKeyAndHeaders']>>;
   try {
-    resolved = await registry.getApiKeyAndHeaders(model);
+    if (model) {
+      resolved = await registry.getApiKeyAndHeaders(model);
+    } else {
+      const apiKey = await registry.getApiKeyForProvider?.(provider);
+      resolved = apiKey ? { ok: true, apiKey } : { ok: false };
+    }
   } catch {
     throw invalidLoginError();
   }
@@ -96,7 +119,7 @@ function isConfirmedOAuth(
 
 function invalidLoginError(): ImageGenError {
   return new ImageGenError(
-    'The ChatGPT Codex login is invalid or expired. Run /login and sign in to ChatGPT Plus/Pro again.',
+    `The Codex image login is invalid or expired. Run ${CODEX_IMAGE_LOGIN_COMMAND}, or repair your legacy Pi openai-codex login.`,
     'Codex login invalid',
     'missing-credentials',
   );

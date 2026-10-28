@@ -6,7 +6,7 @@ Supported **generation** providers:
 
 | Provider                       | Model id (alias)                              | Authentication        |
 | ------------------------------ | --------------------------------------------- | --------------------- |
-| ChatGPT Codex                  | `gpt-image-2` on route `codex-subscription` (`gpt-image-2-codex`, `codex`, and `openai-codex` remain legacy aliases) | Pi `/login` → ChatGPT Plus/Pro (Codex) |
+| ChatGPT Codex                  | `gpt-image-2` on route `codex-subscription` (`gpt-image-2-codex`, `codex`, and `openai-codex` remain legacy aliases) | Existing Pi Codex OAuth or `/login pi-image-gen-openai` |
 | OpenAI                         | `gpt-image-2`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` | `OPENAI_API_KEY`      |
 | Azure OpenAI | Azure GPT Image deployment name (`azure-openai-api`); GPT Image 1 / 1-mini / 1.5 / 2 / 2.5 Flare / Sunburst | `AZURE_OPENAI_API_KEY` |
 | Google Gemini ("Nano Banana")  | `gemini-3-pro-image` (alias `nano-banana-pro`), `gemini-3.1-flash-image` (alias `nano-banana-2`), `gemini-3.1-flash-lite-image` (alias `nano-banana-2-lite`), `gemini-2.5-flash-image` (alias `nano-banana`) | `GEMINI_API_KEY` |
@@ -30,9 +30,20 @@ Upstream API docs (handy when debugging gateway behavior or adding new models):
 - Meta Muse Image cookbook — [github.com/meta-models/meta-model-cookbook/tree/main/05_muse_image](https://github.com/meta-models/meta-model-cookbook/tree/main/05_muse_image)
 - OpenRouter image API — [openrouter.ai/docs/api/api-reference/images/create-images](https://openrouter.ai/docs/api/api-reference/images/create-images)
 
-Built-in API-key routes read `providers.<id>.apiKey` in local `settings.json` first, then fall back to the environment variables shown above; they do not read keys saved by Pi's general `/login` flow. Subscription routes are separate: Meta can use a Pi credential created by the [`pi-meta-oauth`](https://github.com/BlockedPath/pi-meta-oauth) package, while Codex uses Pi's ChatGPT Plus/Pro login. Meta API billing also accepts `META_API_KEY`; legacy `MODEL_API_KEY` remains accepted.
+Built-in API-key routes read `providers.<id>.apiKey` in local `settings.json` first, then fall back to the environment variables shown above; they do not read keys saved by Pi's general `/login` flow. Subscription routes are separate: Meta can use a Pi credential created by the [`pi-meta-oauth`](https://github.com/BlockedPath/pi-meta-oauth) package, while Codex uses a separate ChatGPT subscription login managed by Pi (or an existing legacy Pi Codex login). Meta API billing also accepts `META_API_KEY`; legacy `MODEL_API_KEY` remains accepted.
 
-For subscription-backed generation, first run `/login` in Pi and select **ChatGPT Plus/Pro (Codex)**, then run `/image-gen use codex-subscription gpt-image-2`. No `OPENAI_API_KEY` is required. Codex requests use the ChatGPT-backed image endpoints and count against provider-managed subscription usage and limits. GPT Image 2.5 is intentionally **not** listed on this route: its API model ids have not been verified against the private Codex subscription endpoint.
+An existing Pi `openai-codex` OAuth login is detected automatically, even when no legacy chat models are available. If no compatible login exists, use the separate image login:
+
+```text
+/login pi-image-gen-openai
+/image-gen use codex-subscription gpt-image-2
+```
+
+Select **OpenAI Images (ChatGPT subscription, pi-image-gen)** in `/login`. This authentication-only provider reuses Pi's maintained Codex OAuth implementation; Pi stores and refreshes its credentials without changing your chat provider. The dedicated image login takes precedence over legacy OAuth; a failed refresh never silently switches accounts. `/logout pi-image-gen-openai` removes only this image login. Availability checks never retrieve or refresh tokens.
+
+The newer `openai` ChatGPT plan-sharing login is a different grant and is not reused for the private Codex image endpoint. This route still depends on the Codex-compatible OAuth protocol and provider access.
+
+No `OPENAI_API_KEY` is required. Codex requests use the ChatGPT-backed image endpoints and count against provider-managed subscription usage and limits. GPT Image 2.5 is intentionally **not** listed on this route: its API model ids have not been verified against the private Codex subscription endpoint.
 
 The primary route is configured in `settings.json` as `default: { provider, model }`. Optional `fallback` and `compare` arrays contain the same provider/model pairs. `image_generate` uses the default with selective fallback; `image_compare` runs only for explicit model comparisons. Neither tool accepts arbitrary model/provider arguments. Use `/image-gen use <provider> <model>` to update the default safely without changing either list.
 
